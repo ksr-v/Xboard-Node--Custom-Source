@@ -20,6 +20,40 @@ const (
 
 var httpClient = &http.Client{Timeout: 10 * time.Minute}
 
+// localSourceDirs returns private directories searched before any network download.
+func localSourceDirs() []string {
+	dirs := []string{}
+	if d := os.Getenv("XBOARD_GEO_DATA_SOURCE"); d != "" {
+		dirs = append(dirs, d)
+	}
+	return append(dirs, "/usr/local/share/xboard-node/geo-data")
+}
+
+func copyFromLocal(dst, name string) bool {
+	for _, d := range localSourceDirs() {
+		src := filepath.Join(d, name)
+		in, err := os.Open(src)
+		if err != nil {
+			continue
+		}
+		tmp := dst + ".tmp"
+		out, err := os.Create(tmp)
+		if err != nil {
+			in.Close()
+			return false
+		}
+		_, cerr := io.Copy(out, in)
+		in.Close()
+		if out.Close() != nil || cerr != nil || os.Rename(tmp, dst) != nil {
+			os.Remove(tmp)
+			continue
+		}
+		nlog.Core().Info("geo database restored from local source", "file", name, "source", src)
+		return true
+	}
+	return false
+}
+
 func Ensure(dir string, needGeoIP, needGeoSite bool, kernelType string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create geo_data_dir %q: %w", dir, err)
@@ -62,6 +96,9 @@ func Ensure(dir string, needGeoIP, needGeoSite bool, kernelType string) error {
 func ensureFile(dir, name, url string) error {
 	dst := filepath.Join(dir, name)
 	if _, err := os.Stat(dst); err == nil {
+		return nil
+	}
+	if copyFromLocal(dst, name) {
 		return nil
 	}
 	nlog.Core().Info("geo database missing, downloading automatically", "file", name, "url", url)
