@@ -28,6 +28,7 @@ DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.1}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-}"
+DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Independent/main/node-installer}"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -187,7 +188,7 @@ usage() {
     --node-type, -T     Explicit node type for node mode
     --kernel, -k        singbox or xray (default: singbox)
     --version           Private release version (default: v1.13-orphan.1)
-    --download-base     Explicit private release download base (no default source)
+    --download-base     Release-layout download base (default: files from the project repo node-installer/)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
     --health-port       Local health port (default: 65530, use 0 to disable)
@@ -488,8 +489,8 @@ select_binary_source() {
 resolve_download_url() {
     local artifact="$1"
     if [ -z "$DEFAULT_DOWNLOAD_BASE" ]; then
-        log_error "No private release base configured; provide local binaries with --binary and --xbctl-binary or set --download-base."
-        return 1
+        DOWNLOAD_URL="${DEFAULT_ASSET_BASE%/}/${artifact}"
+        return 0
     fi
     if [ "$RELEASE_VERSION" = "latest" ]; then
         DOWNLOAD_URL="${DEFAULT_DOWNLOAD_BASE}/latest/download/${artifact}"
