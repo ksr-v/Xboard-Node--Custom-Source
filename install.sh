@@ -24,10 +24,10 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="latest"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.1}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
-DEFAULT_DOWNLOAD_BASE="https://github.com/cedar2025/xboard-node/releases"
+DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-}"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -186,7 +186,8 @@ usage() {
   OPTIONAL:
     --node-type, -T     Explicit node type for node mode
     --kernel, -k        singbox or xray (default: singbox)
-    --version           Release version or latest (default: latest)
+    --version           Private release version (default: v1.13-orphan.1)
+    --download-base     Explicit private release download base (no default source)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
     --health-port       Local health port (default: 65530, use 0 to disable)
@@ -243,6 +244,10 @@ parse_args() {
                 ;;
             --version)
                 RELEASE_VERSION="$2"
+                shift 2
+                ;;
+            --download-base)
+                DEFAULT_DOWNLOAD_BASE="${2%/}"
                 shift 2
                 ;;
             --binary)
@@ -482,6 +487,10 @@ select_binary_source() {
 
 resolve_download_url() {
     local artifact="$1"
+    if [ -z "$DEFAULT_DOWNLOAD_BASE" ]; then
+        log_error "No private release base configured; provide local binaries with --binary and --xbctl-binary or set --download-base."
+        return 1
+    fi
     if [ "$RELEASE_VERSION" = "latest" ]; then
         DOWNLOAD_URL="${DEFAULT_DOWNLOAD_BASE}/latest/download/${artifact}"
     else
@@ -592,7 +601,6 @@ render_service() {
     cat >"$TMP_DIR/${SERVICE_NAME}" <<EOF_UNIT
 [Unit]
 Description=Xboard Node Backend
-Documentation=https://github.com/cedar2025/xboard-node
 After=network-online.target
 Wants=network-online.target
 

@@ -30,7 +30,6 @@ const (
 	serviceName            = "xboard-node.service"
 	serviceFilePath        = "/etc/systemd/system/xboard-node.service"
 	defaultInstallRoot     = "/etc/xboard-node"
-	downloadBase           = "https://github.com/cedar2025/xboard-node/releases"
 )
 
 var (
@@ -54,7 +53,7 @@ type fileRootConfig struct {
 	WS        *config.WSConfig   `yaml:"ws,omitempty"`
 	Runtime   *fileRuntimeConfig `yaml:"runtime,omitempty"`
 	Cert      *config.CertConfig `yaml:"cert,omitempty"`
-	Instances []fileInstance      `yaml:"instances,omitempty"`
+	Instances []fileInstance     `yaml:"instances,omitempty"`
 }
 
 type fileInstance struct {
@@ -386,12 +385,19 @@ func runUpgrade(args []string) error {
 		return err
 	}
 
-	version := "latest"
+	version := "v1.13"
+	downloadBase := os.Getenv("XBOARD_NODE_DOWNLOAD_BASE")
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--version" && i+1 < len(args) {
 			version = args[i+1]
 			i++
+		} else if args[i] == "--download-base" && i+1 < len(args) {
+			downloadBase = strings.TrimRight(args[i+1], "/")
+			i++
 		}
+	}
+	if downloadBase == "" {
+		return fmt.Errorf("no private release base configured; use the local installer assets or set XBOARD_NODE_DOWNLOAD_BASE")
 	}
 
 	arch := runtime.GOARCH
@@ -406,8 +412,8 @@ func runUpgrade(args []string) error {
 	newBinary := filepath.Join(binaryDir, ".xboard-node.new")
 	newCLI := filepath.Join(cliDir, ".xbctl.new")
 
-	binaryURL := resolveDownloadURL(fmt.Sprintf("xboard-node-linux-%s", arch), version)
-	cliURL := resolveDownloadURL(fmt.Sprintf("xbctl-linux-%s", arch), version)
+	binaryURL := resolveDownloadURL(downloadBase, fmt.Sprintf("xboard-node-linux-%s", arch), version)
+	cliURL := resolveDownloadURL(downloadBase, fmt.Sprintf("xbctl-linux-%s", arch), version)
 
 	fmt.Printf("Downloading %s...\n", binaryURL)
 	if err := downloadFile(binaryURL, newBinary); err != nil {
@@ -592,7 +598,7 @@ func ensureRoot(cmd string) error {
 	return nil
 }
 
-func resolveDownloadURL(artifact, version string) string {
+func resolveDownloadURL(downloadBase, artifact, version string) string {
 	if version == "latest" {
 		return downloadBase + "/latest/download/" + artifact
 	}
@@ -1157,7 +1163,6 @@ func latestInstanceID(instances []*config.Config) string {
 func regenerateServiceFile() error {
 	unit := fmt.Sprintf(`[Unit]
 Description=Xboard Node Backend
-Documentation=https://github.com/cedar2025/xboard-node
 After=network-online.target
 Wants=network-online.target
 

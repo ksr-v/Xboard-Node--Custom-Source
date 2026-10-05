@@ -1,6 +1,6 @@
 # xboard-node
 
-Node backend for [Xboard](https://github.com/cedar2025/Xboard). Supports `sing-box` / `xray-core` dual kernels.
+Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 
 > **Disclaimer**: This project is for educational and learning purposes only.
 
@@ -14,33 +14,23 @@ Node backend for [Xboard](https://github.com/cedar2025/Xboard). Supports `sing-b
 
 ## Install
 
-### Docker
-
-```bash
-docker run -d --restart=always --network=host \
-  -e apiHost=https://panel.com -e apiKey=TOKEN -e nodeID=1 \
-  ghcr.io/cedar2025/xboard-node:latest
-```
-
-### Docker Compose
-
-```bash
-git clone -b compose --depth 1 https://github.com/cedar2025/xboard-node.git
-cd xboard-node
-vim config/config.yml   # set panel.url / token / node_id
-docker compose up -d
-```
-
 ### Installer (Linux systemd)
+
+Use the privately maintained installer and version-pinned local binaries. The installer does not select a release server by default.
 
 ```bash
 # Node mode
-curl -fsSL https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh | \
-  sudo bash -s -- --mode node --panel https://panel.example.com --token TOKEN --node-id 1
+sudo bash install.sh --mode node --panel https://panel.example.com --token TOKEN \
+  --node-id 1 --version v1.13-orphan.1 --binary ./xboard-node-linux-amd64 \
+  --xbctl-binary ./xbctl-linux-amd64
 
 # Machine mode
-curl -fsSL https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh | \
-  sudo bash -s -- --mode machine --panel https://panel.example.com --token TOKEN --machine-id 1
+sudo bash install.sh --mode machine --panel https://panel.example.com --token TOKEN \
+  --machine-id 1 --version v1.13-orphan.1 --binary ./xboard-node-linux-amd64 \
+  --xbctl-binary ./xbctl-linux-amd64
+```
+
+For arm64, use the matching `*-linux-arm64` binaries. A private asset server may be configured explicitly with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; no release URL is used implicitly.
 
 ## xbctl
 
