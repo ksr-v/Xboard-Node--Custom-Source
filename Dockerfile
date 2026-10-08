@@ -1,20 +1,16 @@
 # Build stage
-FROM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git python3
 
 WORKDIR /build
 
-COPY go.mod go.sum ./
-RUN go mod download
-
 COPY . .
-
-RUN CGO_ENABLED=0 go build -ldflags "-s -w \
-    -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) \
-    -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -tags "with_quic with_utls with_wireguard with_clash_api" \
-    -o xboard-node ./cmd/xboard-node
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" VERSION="$VERSION" COMMIT="$COMMIT" python3 tools/dependencies.py build --host
 
 # Runtime stage — sing-box & xray-core are embedded as Go libraries
 FROM alpine:3.20
@@ -22,6 +18,7 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /build/xboard-node /usr/local/bin/xboard-node
+COPY --from=builder /build/xbctl /usr/local/bin/xbctl
 
 RUN mkdir -p /etc/xboard-node
 
@@ -33,7 +30,7 @@ WORKDIR /etc/xboard-node
 #     -e apiHost=https://panel.example.com \
 #     -e apiKey=YOUR_TOKEN \
 #     -e nodeID=1 \
-#     ghcr.io/cedar2025/xboard-node:latest
+#     YOUR_PRIVATE_IMAGE:IMMUTABLE_VERSION
 #
 # Supported env vars:
 #   apiHost  / API_HOST    → panel URL

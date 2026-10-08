@@ -16,17 +16,17 @@ Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 
 ### Installer (Linux systemd)
 
-Use the privately maintained installer and version-pinned local binaries. The installer does not select a release server by default.
+Use the maintained installer and version-pinned local binaries. The installer does not select a release server by default. Replace the placeholders below with your deployment settings.
 
 ```bash
 # Node mode
-sudo bash install.sh --mode node --panel https://panel.example.com --token TOKEN \
-  --node-id 1 --version v1.13-orphan.1 --binary ./xboard-node-linux-amd64 \
+sudo bash install.sh --mode node --panel https://panel.example.com --token YOUR_TOKEN \
+  --node-id YOUR_NODE_ID --version YOUR_IMMUTABLE_VERSION --binary ./xboard-node-linux-amd64 \
   --xbctl-binary ./xbctl-linux-amd64
 
 # Machine mode
-sudo bash install.sh --mode machine --panel https://panel.example.com --token TOKEN \
-  --machine-id 1 --version v1.13-orphan.1 --binary ./xboard-node-linux-amd64 \
+sudo bash install.sh --mode machine --panel https://panel.example.com --token YOUR_TOKEN \
+  --machine-id YOUR_MACHINE_ID --version YOUR_IMMUTABLE_VERSION --binary ./xboard-node-linux-amd64 \
   --xbctl-binary ./xbctl-linux-amd64
 ```
 
@@ -39,9 +39,9 @@ Run `xbctl` after installation for help. Common commands:
 ```bash
 xbctl list                          # list all instances
 xbctl status                        # running status
-xbctl bind add-node --panel URL --token TOKEN --node-id 1
-xbctl bind add-machine --panel URL --token TOKEN --machine-id 1
-xbctl bind remove-node --panel URL --node-id 1
+xbctl bind add-node --panel URL --token YOUR_TOKEN --node-id YOUR_NODE_ID
+xbctl bind add-machine --panel URL --token YOUR_TOKEN --machine-id YOUR_MACHINE_ID
+xbctl bind remove-node --panel URL --node-id YOUR_NODE_ID
 xbctl service restart
 ```
 
@@ -54,6 +54,15 @@ Legacy single-panel config is fully compatible. Appending bindings auto-migrates
 - Custom routes: [docs-custom-routes.md](docs-custom-routes.md)
 - Custom outbounds: [docs-custom-outbounds.md](docs-custom-outbounds.md)
 - DNS providers (ACME DNS-01): [docs-dns-providers.md](docs-dns-providers.md)
+
+## Dependency maintenance and recovery
+
+- [中文恢复维护指南](DEPENDENCY-RECOVERY.md)
+- [中文依赖保护设计](DEPENDENCY-STRATEGY.md)
+- [完整风险清单](DEPENDENCY-AUDIT.md)
+- [功能验证与未验证范围](DEPENDENCY-TEST-REPORT.md)
+
+Normal Makefile builds require the verified selective Module Proxy snapshot. See the recovery guide for local archive restoration; no dependency proxy service is required on deployed VPS hosts.
 
 ## License
 

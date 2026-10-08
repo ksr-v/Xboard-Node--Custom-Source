@@ -1,0 +1,90 @@
+{
+  "vendor_file": "go-vendor-fea5732.zip",
+  "vendor_bytes": 427225962,
+  "vendor_sha256": "904779a08edefd57b24fa66e303f1134fad2e65e8d20dd5f333db22eb7749a3a",
+  "entries": 10782,
+  "uncompressed_bytes": 1633847629,
+  "module_headers": 255,
+  "largest_groups": [
+    {
+      "path": "github.com/sagernet/cronet-go",
+      "uncompressed_bytes": 1554329136,
+      "compressed_bytes": 404293619
+    },
+    {
+      "path": "golang.org/x",
+      "uncompressed_bytes": 16103437,
+      "compressed_bytes": 3523421
+    },
+    {
+      "path": "github.com/sagernet/tailscale",
+      "uncompressed_bytes": 5630009,
+      "compressed_bytes": 1872600
+    },
+    {
+      "path": "github.com/aws/aws-sdk-go-v2",
+      "uncompressed_bytes": 3501998,
+      "compressed_bytes": 632886
+    },
+    {
+      "path": "gvisor.dev/gvisor",
+      "uncompressed_bytes": 3152890,
+      "compressed_bytes": 867707
+    },
+    {
+      "path": "github.com/openai/openai-go",
+      "uncompressed_bytes": 3086602,
+      "compressed_bytes": 496837
+    },
+    {
+      "path": "github.com/sagernet/gvisor",
+      "uncompressed_bytes": 3055333,
+      "compressed_bytes": 838365
+    },
+    {
+      "path": "github.com/xtls/xray-core",
+      "uncompressed_bytes": 2931099,
+      "compressed_bytes": 841493
+    },
+    {
+      "path": "github.com/andybalholm/brotli",
+      "uncompressed_bytes": 2454736,
+      "compressed_bytes": 450296
+    },
+    {
+      "path": "github.com/sagernet/sing-tun",
+      "uncompressed_bytes": 2410689,
+      "compressed_bytes": 961666
+    },
+    {
+      "path": "github.com/sagernet/sing-box",
+      "uncompressed_bytes": 2290636,
+      "compressed_bytes": 769988
+    },
+    {
+      "path": "go.opentelemetry.io/otel",
+      "uncompressed_bytes": 2021290,
+      "compressed_bytes": 410117
+    },
+    {
+      "path": "github.com/anthropics/anthropic-sdk-go",
+      "uncompressed_bytes": 1522441,
+      "compressed_bytes": 257312
+    },
+    {
+      "path": "google.golang.org/protobuf",
+      "uncompressed_bytes": 1500204,
+      "compressed_bytes": 335226
+    },
+    {
+      "path": "google.golang.org/grpc",
+      "uncompressed_bytes": 1270415,
+      "compressed_bytes": 400429
+    }
+  ],
+  "selective_archive": "module-proxy-d2ab7c680c219e58.zip",
+  "selective_bytes": 74065932,
+  "reduction_percent": 82.66,
+  "selected_modules": 582,
+  "protected_modules": 127
+}

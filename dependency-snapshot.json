@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "archive": "module-proxy-d2ab7c680c219e58.zip",
+  "sha256": "32ba04a05003d9f11cac5959bcfe310f82879eaf52b2b81903b7f43a53dfad5f",
+  "bytes": 74065932,
+  "manifest_sha256": "1c466aff318d92b3a11688063dbb61bebf91f06df029dac19b3a49d62d287f27",
+  "lock_sha256": "679b6438e363d9001d4e30f8624c01c8e353564de8d0e19908a5f03b5444f0c2",
+  "release_tag": "dependencies-d2ab7c680c219e58"
+}

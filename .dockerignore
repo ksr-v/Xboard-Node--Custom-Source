@@ -1,0 +1,14 @@
+.git
+**/__pycache__
+.dependency-work/*
+!.dependency-work/snapshot
+!.dependency-work/snapshot/**
+xboard-node
+xboard-node-linux-*
+xbctl
+xbctl-linux-*
+*.exe
+.env
+config.yml
+config.json
+vendor

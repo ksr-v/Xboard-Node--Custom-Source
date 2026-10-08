@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "public_proxy": "https://proxy.golang.org",
+  "low_risk_prefixes": [
+    "golang.org/x/", "google.golang.org/", "cloud.google.com/go", "github.com/google/",
+    "github.com/googleapis/", "github.com/Azure/", "github.com/AzureAD/", "github.com/aws/",
+    "github.com/cloudflare/", "go.opentelemetry.io/", "go.uber.org/", "gvisor.dev/gvisor",
+    "github.com/tailscale/", "github.com/anthropics/", "github.com/openai/", "go.mongodb.org/"
+  ],
+  "overrides": {
+    "github.com/cedar2025/sing-box": {"risk": "C", "backup": true, "reason": "被替换的定制内核；孤儿维护策略禁止再依赖原维护者；只从已有可信本地缓存获取。"},
+    "github.com/cedar2025/Xray-core": {"risk": "C", "backup": true, "reason": "被替换的定制内核；必须保存当前精确提交，不能用官方内核替换。"}
+  },
+  "blocked_network_prefixes": ["github.com/cedar2025/"],
+  "notes": "机构归属仅作为初始筛选；未确认维护者、发布与可替代性的模块默认 review_required 并备份。可为任意有效模块路径添加风险、备份和理由覆盖；C 不允许免备份。"
+}
