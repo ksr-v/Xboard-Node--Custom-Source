@@ -491,13 +491,29 @@ check_node_command
     def test_foreign_cli_link_regular_file_refuses_uninstall(self):
         result, files, _ = self.run_fixture(r'''
 seed_old
+rm -f "$CLI_LINK_PATH"
 printf 'foreign executable do not remove\n' > "$CLI_LINK_PATH"
+[[ ! -L "$CLI_LINK_PATH" && -f "$CLI_LINK_PATH" ]]
 parse_args uninstall --yes
 perform_uninstall
 ''')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(files["usrbin/xbctl"], b"foreign executable do not remove\n")
         self.assert_old_restored(files)
+        if NATIVE_SYMLINKS:
+            with self.subTest(foreign_symlink_target=True):
+                result, files, links = self.run_fixture(r'''
+seed_old
+rm -f "$CLI_LINK_PATH"
+ln -s "$TASK_FIXTURE_ROOT/external-cert/key.pem" "$CLI_LINK_PATH"
+[[ -L "$CLI_LINK_PATH" ]]
+parse_args uninstall --yes
+perform_uninstall
+''')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("usrbin/xbctl", links)
+                self.assertTrue(links["usrbin/xbctl"].endswith("key.pem"))
+                self.assert_old_restored(files)
 
     def test_no_terminal_without_yes_is_refused_before_mutation(self):
         result, files, _ = self.run_fixture("main --panel https://new.example.com --token hidden-fixture-token --machine-id 41\n")

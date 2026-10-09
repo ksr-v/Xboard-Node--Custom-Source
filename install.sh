@@ -28,7 +28,7 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.3}"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.4}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
@@ -235,7 +235,7 @@ usage() {
   OPTIONAL:
     --node-type, -T     Explicit node type for node mode
     --kernel, -k        singbox or xray (default: singbox)
-    --version           Fixed release version (default: v1.13-orphan.3)
+    --version           Fixed release version (default: v1.13-orphan.4)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
