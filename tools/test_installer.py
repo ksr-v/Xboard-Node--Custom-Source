@@ -56,11 +56,15 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("RESULT:machine:41:xray", output)
         self.assertNotIn("fixture-token-only", output)
 
-    def test_upgrade_and_status_need_no_credentials(self):
-        for choice, action in (("2", "upgrade"), ("3", "status")):
-            output = self.ok('interactive_menu; [[ -z "$TOKEN$PANEL_URL$NODE_ID$MACHINE_ID" ]]; '
+    def test_management_menu_needs_no_credentials(self):
+        for choice, action in (("1", "upgrade"), ("2", "restart"), ("3", "uninstall")):
+            output = self.ok('management_menu; [[ -z "$TOKEN$PANEL_URL$NODE_ID$MACHINE_ID" ]]; '
                              'printf "ACTION:%s\\n" "$ACTION"', choice + "\n")
             self.assertIn("ACTION:" + action, output)
+
+    def test_uninstall_menu_needs_no_credentials(self):
+        output = self.ok('interactive_menu; printf "ACTION:%s\\n" "$ACTION"', "2\n")
+        self.assertIn("ACTION:uninstall", output)
 
     def test_cancel(self):
         self.assertNotIn("UNREACHABLE", self.ok('interactive_menu; echo UNREACHABLE', "0\n"))
@@ -74,17 +78,42 @@ class InstallerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requires a Bash terminal", result.stdout)
 
-    def test_explicit_arguments_bypass_menu(self):
+    def test_yes_arguments_bypass_menu(self):
         output = self.ok('''
 check_root() { :; }; detect_arch() { :; }; detect_os() { :; }
 ensure_systemd() { :; }; install_dependencies() { :; }
+check_owned_paths() { :; }; acquire_install_lock() { :; }; check_node_command() { :; }
 interactive_menu() { echo UNEXPECTED_MENU; return 1; }
 perform_install() { validate_install_request; printf 'TARGET:%s:%s\n' "$MODE" "$NODE_ID"; }
-main --panel https://panel.example.com --token fixture-token-only --node-id 11
+main --yes --panel https://panel.example.com --token fixture-token-only --node-id 11
 ''')
         self.assertIn("TARGET:node:11", output)
         self.assertNotIn("UNEXPECTED_MENU", output)
         self.assertNotIn("fixture-token-only", output)
+
+    def test_panel_arguments_still_show_menu(self):
+        output = self.ok('''
+check_root() { :; }; detect_arch() { :; }; detect_os() { :; }
+ensure_systemd() { :; }; install_dependencies() { :; }
+check_owned_paths() { :; }; acquire_install_lock() { :; }; check_node_command() { :; }
+open_menu_terminal() { echo MENU_OPENED; MENU_FD=0; }
+perform_install() { validate_install_request; printf 'TARGET:%s:%s\n' "$MODE" "$MACHINE_ID"; }
+main --mode machine --panel https://panel.example.com --token fixture-token-only --machine-id 41
+''', "1\n")
+        self.assertIn("MENU_OPENED", output)
+        self.assertIn("1)", output)
+        self.assertIn("TARGET:machine:41", output)
+        self.assertNotIn("fixture-token-only", output)
+
+    def test_menu_reads_separate_descriptor(self):
+        output = self.ok('''
+exec 3<<< '2'
+MENU_FD=3
+interactive_menu
+IFS= read -r remaining
+printf 'RESULT:%s:%s\n' "$ACTION" "$remaining"
+''', "SCRIPT_STDIN_UNTOUCHED\n")
+        self.assertIn("RESULT:uninstall:SCRIPT_STDIN_UNTOUCHED", output)
 
     def test_fixed_release_urls_and_override(self):
         for arch in ("amd64", "arm64"):
@@ -103,6 +132,7 @@ main --panel https://panel.example.com --token fixture-token-only --node-id 11
 CONFIG_FILE="$TASK_FIXTURE_CONFIG"; CLI_PATH=/nonexistent-fixture-cli
 detect_current_state() { CURRENT_STATE=installed; }
 ensure_dirs() { :; }; stage_binary() { :; }; stage_xbctl() { :; }
+stage_installer() { :; }; install_management_files() { :; }; stop_existing_service() { :; }
 render_service() { :; }; backup_existing_state() { BACKUP_PATH=/nonexistent-fixture-backup; }
 mktemp() { printf /nonexistent-fixture-stage; }
 install() { :; }; ln() { :; }; systemctl() { :; }
@@ -143,6 +173,20 @@ stage_xbctl
             result = self.upgrade(port)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn(f"HEALTH:{port}:{int(port != 0)}", result.stdout)
+
+    def test_historical_cli_empty_or_unsupported_health_port(self):
+        with tempfile.TemporaryDirectory(prefix="node-old-cli-health-") as directory:
+            config = Path(directory) / "config.yml"
+            cli = Path(directory) / "xbctl"
+            config.write_text("health_port: 0\n", encoding="utf-8")
+            for response in ("exit 0", "exit 1"):
+                cli.write_text("#!/usr/bin/env bash\n" + response + "\n", encoding="utf-8", newline="\n")
+                cli.chmod(0o755)
+                output = self.ok('CONFIG_FILE="$TASK_CONFIG"; CLI_PATH="$TASK_CLI"; '
+                                 'load_health_port_from_config "$CONFIG_FILE"; '
+                                 'printf "HEALTH:%s:%s\\n" "$HEALTH_PORT" "$HEALTH_ENABLED"',
+                                 env={"TASK_CONFIG": config.as_posix(), "TASK_CLI": cli.as_posix()})
+                self.assertIn("HEALTH:0:0", output)
 
     def test_explicit_health_override_and_validation(self):
         for port in (0, 23456):

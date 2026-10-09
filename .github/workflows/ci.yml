@@ -39,6 +39,7 @@ jobs:
         run: |
           python3 tools/test_dependencies.py
           python3 tools/test_installer.py
+          python3 tools/test_replacement.py
 
       - name: Restore pinned dependency snapshot
         run: python3 tools/ci_snapshot.py
