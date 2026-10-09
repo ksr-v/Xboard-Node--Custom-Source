@@ -492,7 +492,7 @@ def build(dest, arch, test=False, host=False, isolated=False):
         ldflags = os.environ.get('LDFLAGS', f'-s -w -X main.version={version} -X main.buildTime={build_time} -X main.commit={commit}')
         for name in ('xboard-node', 'xbctl'):
             suffix = '.exe' if host and os.name == 'nt' else ('' if host else '-linux-' + arch)
-            run(['go', 'build', '-tags', HOST_TAGS if host else TAGS, '-ldflags', ldflags,
+            run(['go', 'build', '-trimpath', '-tags', HOST_TAGS if host else TAGS, '-ldflags', ldflags,
                  '-o', str(out / (name + suffix)), './cmd/' + name], env, capture=False)
 
 

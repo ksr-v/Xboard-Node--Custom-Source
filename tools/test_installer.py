@@ -118,7 +118,7 @@ printf 'RESULT:%s:%s\n' "$ACTION" "$remaining"
     def test_fixed_release_urls_and_override(self):
         for arch in ("amd64", "arm64"):
             output = self.ok(f'ARCH={arch}; resolve_download_url "xboard-node-linux-$ARCH"; echo "$DOWNLOAD_URL"')
-            self.assertIn(f"/ksr-v/Xboard-Node--Custom-Source/releases/download/v1.13-orphan.2/xboard-node-linux-{arch}", output)
+            self.assertIn(f"/ksr-v/Xboard-Node--Custom-Source/releases/download/v1.13-orphan.3/xboard-node-linux-{arch}", output)
             self.assertNotIn("latest", output)
         output = self.ok('parse_args --version custom --download-base https://assets.example.com/releases; '
                          'resolve_download_url xbctl-linux-amd64; echo "$DOWNLOAD_URL"')
@@ -164,7 +164,7 @@ chmod() { :; }; cp() { echo UNEXPECTED_LOCAL_COPY; }
 stage_xbctl
 ''', env={"TASK_LOCAL_DIR": Path(directory).as_posix()})
             self.assertIn("DOWNLOAD:", result.stdout)
-            self.assertIn("/download/v1.13-orphan.2/xbctl-linux-amd64", result.stdout)
+            self.assertIn("/download/v1.13-orphan.3/xbctl-linux-amd64", result.stdout)
             self.assertNotIn("UNEXPECTED_LOCAL_COPY", result.stdout)
             self.assertNotEqual(result.returncode, 0)
 

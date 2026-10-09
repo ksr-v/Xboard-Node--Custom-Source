@@ -141,6 +141,18 @@ class RecoveryToolsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Build tags changed'):
             d.verify(self.snapshot)
 
+    def test_release_builds_remove_local_source_paths(self):
+        build_policy = dict(d.policy(), public_proxy='https://proxy.example.com')
+        with mock.patch.object(d, 'policy', return_value=build_policy), \
+                mock.patch.object(d, 'run', return_value='fixture-commit') as execute:
+            for arch in ('amd64', 'arm64'):
+                d.build(self.snapshot, arch)
+        commands = [call.args[0] for call in execute.call_args_list if call.args[0][:2] == ['go', 'build']]
+        self.assertEqual(len(commands), 4)
+        for command in commands:
+            self.assertIn('-trimpath', command)
+            self.assertIn('-ldflags', command)
+
     def test_recovery_refuses_source_mutation_after_successful_commands(self):
         # Fault injection: every external command reports success, but a build
         # rewrites go.sum. Exercise the real recovery gateway and final result.

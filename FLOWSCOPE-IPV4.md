@@ -40,7 +40,7 @@ VERIFIED：固定依赖的原有 internal/... 套件；检测缓存/超时/TLS/�
 重跑集成与直连测试：
 
 ~~~powershell
-$env:FLOWSCOPE_TEST_RECEIVER='D:/xb-flowscope/tests/node-receiver.php'
+$env:FLOWSCOPE_TEST_RECEIVER=(Resolve-Path ../xb-flowscope/tests/node-receiver.php).Path
 $env:FLOWSCOPE_TEST_LIVE_IP='1'
 python tools/dependencies.py test --host
 ~~~

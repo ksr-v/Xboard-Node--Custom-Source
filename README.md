@@ -26,7 +26,7 @@ node_script=$(curl -fsS --max-time 30 --max-filesize 65536 https://raw.githubuse
 - 选 **2 卸载**：输入 `UNINSTALL` 确认后断开本机全部 Node 对接并卸载，保留私有恢复备份。
 - 选 **0 退出**。面板生成的带参数对接指令也会显示此菜单，选择安装时沿用参数中的目标，不重复填写。菜单通过独立终端读取，不占用管道脚本的 stdin；自动化必须显式加 `--yes`。
 
-自动识别 amd64/arm64，默认固定下载本项目 Release **v1.13-orphan.2**，不使用 latest，也不使用仓库中旧版二进制直链。必须信任该仓库：命令完整缓冲 HTTPS 脚本后以 root 执行，入口跟随 main；需要审核／离线部署时使用下方本地文件方式。仅适用于本项目标准 Linux/systemd 安装；Docker、自定义服务或不完整安装请先人工确认。
+自动识别 amd64/arm64，默认固定下载本项目 Release **v1.13-orphan.3**，不使用 latest，也不使用仓库中旧版二进制直链。必须信任该仓库：命令完整缓冲 HTTPS 脚本后以 root 执行，入口跟随 main；需要审核／离线部署时使用下方本地文件方式。仅适用于本项目标准 Linux/systemd 安装；Docker、自定义服务或不完整安装请先人工确认。
 
 安装替换、升级和重启均可能中断连接。IPv4 自动展示还需启用 FlowScope 2.4.0，和周期流量开关无关。
 
@@ -78,7 +78,11 @@ sudo bash install.sh --yes --mode machine --panel https://panel.example.com --to
 
 For arm64, use the matching `*-linux-arm64` binaries. Override the maintained Release base with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; explicit local binary arguments take precedence. Files in the current directory are never selected implicitly. Upgrading offline uses `sudo bash install.sh upgrade --version YOUR_IMMUTABLE_VERSION --binary ./xboard-node-linux-amd64 --xbctl-binary ./xbctl-linux-amd64`. Automated uninstall: `sudo bash install.sh uninstall --yes`.
 
-Installer verification (2026-10-09): `python tools/test_installer.py` passed 20 tests; `python tools/test_replacement.py` passed 27 with 1 skipped (48 total, 47 passed). Isolated Bash/filesystem fixtures cover replacement, stop refusal, rollback including original service state, uninstall and command ownership; a real local `xbctl` generated one new instance from an old dual-65530 fixture. Windows lacks native symlink permission: link creation was explicitly simulated and the real-symlink security case skipped. No real root/network/systemd mutation occurred. Linux service/port release and controlling-terminal pipeline acceptance remain NOT RUN. This change updates the maintained installer, not immutable v1.13-orphan.2 Release assets. The published Node release has local build/test verification; remote CI has a missing historical dependency-snapshot Release (see its release notes).
+Installer verification (2026-10-09): `python tools/test_installer.py` passed 20 tests; `python tools/test_replacement.py` passed 27 with 1 skipped (48 total, 47 passed). Isolated Bash/filesystem fixtures cover replacement, stop refusal, rollback including original service state, uninstall and command ownership; a real local `xbctl` generated one new instance from an old dual-65530 fixture. Windows lacks native symlink permission: link creation was explicitly simulated and the real-symlink security case skipped. No real root/network/systemd mutation occurred. Linux service/port release and controlling-terminal pipeline acceptance remain NOT RUN. v1.13-orphan.3 includes this installer and trimpath builds; immutable v1.13-orphan.2 assets remain unchanged. Remote CI has a missing historical dependency-snapshot Release (see release notes).
+
+### 发布与脱敏
+
+本项目公开仓库仅发布受 Git 管理的源码；实际 `config.yml`、`.env`、凭据、私钥、测试运行产物及 `.dependency-work` 不进入源码包。发布前对导出的源码树和新增提交执行敏感信息扫描，人工区分测试假值与真实凭据，并检查 Release 附件。固定依赖构建启用 Go `-trimpath`，避免二进制暴露构建机绝对源码路径。扫描是已知模式检查，不是不存在任何敏感信息的绝对保证；详见 [发布检查记录](RELEASE-v1.13-orphan.3.md)。
 
 ## xbctl
 
