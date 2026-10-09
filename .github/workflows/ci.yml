@@ -35,8 +35,10 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Test dependency tooling including corruption refusal
-        run: python3 tools/test_dependencies.py
+      - name: Test dependency tooling and installer fixtures
+        run: |
+          python3 tools/test_dependencies.py
+          python3 tools/test_installer.py
 
       - name: Restore pinned dependency snapshot
         run: python3 tools/ci_snapshot.py

@@ -24,10 +24,10 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.1}"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.2}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
-DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-}"
+DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
 DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Independent/main/node-installer}"
 
 ACTION="${DEFAULT_ACTION}"
@@ -41,6 +41,8 @@ KERNEL_TYPE="${DEFAULT_KERNEL}"
 RELEASE_VERSION="${DEFAULT_RELEASE_VERSION}"
 HEALTH_PORT="${DEFAULT_HEALTH_PORT}"
 HEALTH_ENABLED=1
+HEALTH_PORT_SET=0
+INTERACTIVE=0
 RUNTIME_GOMEMLIMIT=""
 RUNTIME_GOGC=""
 BINARY_SOURCE=""
@@ -187,8 +189,8 @@ usage() {
   OPTIONAL:
     --node-type, -T     Explicit node type for node mode
     --kernel, -k        singbox or xray (default: singbox)
-    --version           Private release version (default: v1.13-orphan.1)
-    --download-base     Release-layout download base (default: files from the project repo node-installer/)
+    --version           Fixed release version (default: v1.13-orphan.2)
+    --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
     --health-port       Local health port (default: 65530, use 0 to disable)
@@ -199,12 +201,42 @@ usage() {
     --yes, -y           Non-interactive confirmation for destructive operations
 
   EXAMPLES:
+    sudo bash install.sh            # interactive install / upgrade / status menu
     sudo bash install.sh --panel https://panel.example.com --token TOKEN --node-id 1
     sudo bash install.sh --panel https://panel.example.com --token TOKEN --machine-id 1
     sudo bash install.sh upgrade
     sudo bash install.sh uninstall --purge --yes
 
 HELP
+}
+
+interactive_menu() {
+    local choice target
+    printf '\nXboard-Node %s\n1) 安装 / 新增对接\n2) 原地升级（保留配置和绑定）\n3) 查看状态\n0) 退出\n' "$RELEASE_VERSION"
+    read -r -p '请选择 [0-3]: ' choice
+    case "$choice" in
+        0) exit 0 ;;
+        2) ACTION=upgrade; return ;;
+        3) ACTION=status; return ;;
+        1) ACTION=install ;;
+        *) log_error '无效选项，未执行操作'; return 1 ;;
+    esac
+    read -r -p '对接模式：1) node  2) machine [默认 1]: ' target
+    case "${target:-1}" in
+        1) MODE=node ;;
+        2) MODE=machine ;;
+        *) log_error '无效对接模式'; return 1 ;;
+    esac
+    read -r -p '面板地址（例如 https://panel.example.com）: ' PANEL_URL
+    if [ "$MODE" = machine ]; then
+        read -r -p 'Machine ID: ' MACHINE_ID
+    else
+        read -r -p 'Node ID: ' NODE_ID
+    fi
+    read -r -s -p 'Token（输入不回显）: ' TOKEN
+    printf '\n'
+    read -r -p '内核 singbox / xray [默认 singbox]: ' KERNEL_TYPE
+    KERNEL_TYPE="${KERNEL_TYPE:-singbox}"
 }
 
 parse_args() {
@@ -261,6 +293,7 @@ parse_args() {
                 ;;
             --health-port)
                 HEALTH_PORT="$2"
+                HEALTH_PORT_SET=1
                 shift 2
                 ;;
             --gomemlimit)
@@ -475,6 +508,11 @@ select_binary_source() {
         echo "$BINARY_SOURCE"
         return
     fi
+    # The quick menu must not accidentally reuse an old binary in the SSH cwd.
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        echo ""
+        return
+    fi
     if [ -f "./xboard-node" ]; then
         echo "./xboard-node"
         return
@@ -530,9 +568,9 @@ stage_xbctl() {
             exit 1
         fi
         local_src="$CLI_BINARY_SOURCE"
-    elif [ -f "./xbctl" ]; then
+    elif [ "$INTERACTIVE" -eq 0 ] && [ -f "./xbctl" ]; then
         local_src="./xbctl"
-    elif [ -f "./xbctl-linux-${ARCH}" ]; then
+    elif [ "$INTERACTIVE" -eq 0 ] && [ -f "./xbctl-linux-${ARCH}" ]; then
         local_src="./xbctl-linux-${ARCH}"
     fi
     if [ -n "$local_src" ]; then
@@ -742,6 +780,19 @@ perform_upgrade() {
         perform_install
         return
     fi
+    if [ "$CURRENT_STATE" != installed ]; then
+        log_error 'Incomplete/custom installation; inspect existing config/service before upgrading'
+        return 1
+    fi
+    if [ "$HEALTH_PORT_SET" -eq 0 ]; then
+        load_health_port_from_config "$CONFIG_FILE"
+    fi
+    if ! [[ "$HEALTH_PORT" =~ ^[0-9]+$ ]] || [ "$HEALTH_PORT" -gt 65535 ]; then
+        log_error 'Invalid health port; no files changed'
+        return 1
+    fi
+    HEALTH_ENABLED=1
+    if [ "$HEALTH_PORT" -eq 0 ]; then HEALTH_ENABLED=0; fi
     TMP_DIR=$(mktemp -d)
     ensure_dirs
     stage_binary
@@ -821,6 +872,14 @@ perform_status() {
 }
 
 main() {
+    if [ "$#" -eq 0 ]; then
+        if [ ! -t 0 ]; then
+            log_error 'Interactive menu requires a Bash terminal; use explicit arguments for automation'
+            return 1
+        fi
+        INTERACTIVE=1
+        interactive_menu
+    fi
     parse_args "$@"
     case "$ACTION" in
         help)
