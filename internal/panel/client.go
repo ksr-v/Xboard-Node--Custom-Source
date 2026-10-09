@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,6 +42,7 @@ type Client struct {
 
 	apiSuccess atomic.Uint64
 	apiFailure atomic.Uint64
+	address    addressReporter
 }
 
 // NewClient creates a new panel API client.
@@ -414,6 +416,10 @@ func (c *Client) postJSON(path string, payload map[string]interface{}) error {
 }
 
 func (c *Client) doRequest(method, path string, body []byte, ifNoneMatch string) (*http.Response, error) {
+	return c.doRequestContext(context.Background(), method, path, body, ifNoneMatch)
+}
+
+func (c *Client) doRequestContext(ctx context.Context, method, path string, body []byte, ifNoneMatch string) (*http.Response, error) {
 	fullURL := c.baseURL + path
 
 	var bodyReader io.Reader
@@ -428,7 +434,7 @@ func (c *Client) doRequest(method, path string, body []byte, ifNoneMatch string)
 		bodyReader = bytes.NewReader(merged)
 	}
 
-	req, err := http.NewRequest(method, fullURL, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +447,15 @@ func (c *Client) doRequest(method, path string, body []byte, ifNoneMatch string)
 
 	nlog.Core().Debug("panel request", "method", method, "path", path)
 
-	resp, err := c.httpClient.Do(req)
+	client := c.httpClient
+	if path == addressPath {
+		// Reuse the existing transport and identity; never forward a credential on redirect.
+		optional := *client
+		optional.Timeout = 5 * time.Second
+		optional.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &optional
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		c.apiFailure.Add(1)
 		return nil, err
@@ -449,6 +463,9 @@ func (c *Client) doRequest(method, path string, body []byte, ifNoneMatch string)
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		c.apiSuccess.Add(1)
+		if path != addressPath {
+			c.maybeReportAddress()
+		}
 	} else {
 		c.apiFailure.Add(1)
 	}
