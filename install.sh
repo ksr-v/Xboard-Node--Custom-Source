@@ -14,6 +14,9 @@ BACKUP_DIR="${INSTALL_ROOT}/backups"
 INSTALL_META="${INSTALL_ROOT}/install-meta.json"
 CONFIG_FILE="${INSTALL_ROOT}/config.yml"
 CREDENTIALS_FILE="${INSTALL_ROOT}/credentials.env"
+ENDPOINT_CA_PATH="${INSTALL_ROOT}/node-endpoint-ca.pem"
+ENDPOINT_TRUST_PATH="${INSTALL_ROOT}/node-endpoint-trust.pem"
+ENDPOINT_META_PATH="${INSTALL_ROOT}/node-endpoint-trust.json"
 BINARY_PATH="/usr/local/bin/xboard-node"
 SERVICE_NAME="xboard-node.service"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
@@ -33,11 +36,15 @@ DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
 DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Independent/main/node-installer}"
+INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Independent/nodeendpoint-native-v1.0.0/node-installer"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
 PANEL_URL=""
 TOKEN=""
+ENDPOINT_CA_BASE64=""
+ENDPOINT_CA_FINGERPRINT=""
+ENDPOINT_TRUST=0
 NODE_ID=""
 NODE_TYPE=""
 MACHINE_ID=""
@@ -119,6 +126,9 @@ restore_backup_state() {
     restore_backup_file config.yml "$CONFIG_FILE" 600 || return 1
     restore_backup_file credentials.env "$CREDENTIALS_FILE" 600 || return 1
     restore_backup_file install-meta.json "$INSTALL_META" 644 || return 1
+    restore_backup_file node-endpoint-ca.pem "$ENDPOINT_CA_PATH" 600 || return 1
+    restore_backup_file node-endpoint-trust.pem "$ENDPOINT_TRUST_PATH" 600 || return 1
+    restore_backup_file node-endpoint-trust.json "$ENDPOINT_META_PATH" 600 || return 1
     restore_backup_file xbctl "$CLI_PATH" 755 || return 1
     restore_backup_file "$SERVICE_NAME" "$SERVICE_PATH" 644 || return 1
     if [ "$INSTANCES_ARCHIVED" -eq 1 ]; then
@@ -235,6 +245,8 @@ usage() {
   OPTIONAL:
     --node-type, -T     Explicit node type for node mode
     --kernel, -k        singbox or xray (default: singbox)
+    --endpoint-ca-base64       Panel-generated public CA bundle (no private key)
+    --endpoint-ca-fingerprint  Independently delivered SHA-256 root pins
     --version           Fixed release version (default: v1.13-orphan.4)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
@@ -333,13 +345,13 @@ owned_cli_link() {
 
 check_owned_paths() {
     local path
-    for path in "$INSTALL_ROOT" "$BACKUP_DIR" "$INSTALL_ROOT/instances" "$CONFIG_FILE" "$CREDENTIALS_FILE" "$INSTALL_META" "$INSTALLER_COPY_PATH" "$SERVICE_PATH" "$BINARY_PATH" "$CLI_PATH"; do
+    for path in "$INSTALL_ROOT" "$BACKUP_DIR" "$INSTALL_ROOT/instances" "$CONFIG_FILE" "$CREDENTIALS_FILE" "$INSTALL_META" "$INSTALLER_COPY_PATH" "$SERVICE_PATH" "$BINARY_PATH" "$CLI_PATH" "$ENDPOINT_CA_PATH" "$ENDPOINT_TRUST_PATH" "$ENDPOINT_META_PATH"; do
         if [ -L "$path" ]; then
             log_error 'Managed path is a symlink; inspect manually before replacing or uninstalling'
             return 1
         fi
     done
-    for path in "$CONFIG_FILE" "$CREDENTIALS_FILE" "$INSTALL_META" "$INSTALLER_COPY_PATH" "$SERVICE_PATH" "$BINARY_PATH" "$CLI_PATH"; do
+    for path in "$CONFIG_FILE" "$CREDENTIALS_FILE" "$INSTALL_META" "$INSTALLER_COPY_PATH" "$SERVICE_PATH" "$BINARY_PATH" "$CLI_PATH" "$ENDPOINT_CA_PATH" "$ENDPOINT_TRUST_PATH" "$ENDPOINT_META_PATH"; do
         if [ -e "$path" ] && [ ! -f "$path" ]; then
             log_error 'Managed file is not a regular file; inspect manually before continuing'
             return 1
@@ -352,6 +364,9 @@ check_owned_paths() {
     if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$INSTALL_ROOT/instances"; then
         log_error 'Instance directory is a mount point; refusing to move it'
         return 1
+    fi
+    if [ -e "$ENDPOINT_CA_PATH" ] || [ -e "$ENDPOINT_TRUST_PATH" ] || [ -e "$ENDPOINT_META_PATH" ]; then
+        endpoint_ca_helper check "" "$INSTALL_ROOT"
     fi
 }
 
@@ -367,7 +382,7 @@ stage_installer() {
     elif [ -n "${BASH_EXECUTION_STRING:-}" ]; then
         printf '%s\n' "$BASH_EXECUTION_STRING" > "$TMP_DIR/install.sh"
     else
-        curl -fsSL --max-time 30 --max-filesize 65536 "${DEFAULT_ASSET_BASE%/}/install.sh" -o "$TMP_DIR/install.sh"
+        curl -fsSL --proto '=https' --proto-redir '=https' --max-time 30 --max-filesize 65536 "${INSTALLER_STAGE_BASE%/}/install.sh" -o "$TMP_DIR/install.sh"
     fi
     [ -s "$TMP_DIR/install.sh" ]
     bash -n "$TMP_DIR/install.sh"
@@ -414,6 +429,14 @@ parse_args() {
                 ;;
             --token|-t)
                 TOKEN="$2"
+                shift 2
+                ;;
+            --endpoint-ca-base64)
+                ENDPOINT_CA_BASE64="$2"
+                shift 2
+                ;;
+            --endpoint-ca-fingerprint)
+                ENDPOINT_CA_FINGERPRINT="$2"
                 shift 2
                 ;;
             --node-id|-n)
@@ -575,13 +598,13 @@ install_dependencies() {
     case "$OS" in
         ubuntu|debian)
             DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get update -qq
-            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates python3 openssl >/dev/null 2>&1
             ;;
         centos|rhel|rocky|almalinux|fedora)
             if command -v dnf >/dev/null 2>&1; then
-                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates >/dev/null 2>&1
+                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates python3 openssl >/dev/null 2>&1
             else
-                run_with_retry 5 3 yum install -y -q curl wget ca-certificates >/dev/null 2>&1
+                run_with_retry 5 3 yum install -y -q curl wget ca-certificates python3 openssl >/dev/null 2>&1
             fi
             ;;
         *)
@@ -695,6 +718,146 @@ resolve_download_url() {
     fi
 }
 
+endpoint_ca_helper() {
+    python3 - "$@" <<'PY_ENDPOINT_CA'
+import base64, hashlib, json, os, re, ssl, stat, subprocess, sys, tempfile
+from pathlib import Path
+from urllib.parse import urlsplit
+def require(value, reason):
+    if not value: raise ValueError(reason)
+def command(args):
+    p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    require(p.returncode == 0, 'CA validation failed: ' + args[0])
+    return p.stdout.decode()
+def safe(path):
+    for parent in (path, *path.parents):
+        info = parent.lstat()
+        require(not stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022, 'Unsafe Node trust ownership/path')
+    require(path.stat().st_nlink == 1 and path.is_file() and stat.S_IMODE(path.stat().st_mode) == 0o600, 'Node trust files must be Root-only 0600')
+def verify(data, expected, current=True):
+    blocks = re.findall(rb'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', data, re.S)
+    require(len(data) <= 32768 and b'PRIVATE KEY' not in data and 1 <= len(blocks) <= 2
+            and not re.sub(rb'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', b'', data, flags=re.S).strip(), 'Only public root CA certificates are accepted')
+    wanted = expected.split(',')
+    require(len(wanted) == len(blocks) and len(set(wanted)) == len(wanted)
+            and all(re.fullmatch('[a-f0-9]{64}', pin) for pin in wanted), 'Invalid independent CA fingerprints')
+    normalized = []
+    with tempfile.TemporaryDirectory(prefix='node-endpoint-ca-') as temporary:
+        for index, cert in enumerate(blocks):
+            der = ssl.PEM_cert_to_DER_cert(cert.decode())
+            require(hashlib.sha256(der).hexdigest() == wanted[index], 'CA fingerprint mismatch')
+            public = ssl.DER_cert_to_PEM_cert(der).encode()
+            if not current:
+                normalized.append(public)
+                continue
+            path = Path(temporary) / 'root.pem'; path.write_bytes(public)
+            text = command(['openssl', 'x509', '-in', str(path), '-noout', '-text'])
+            require(re.search(r'Basic Constraints[^\n]*\n\s*CA:TRUE', text)
+                    and re.search(r'Key Usage[^\n]*\n\s*[^\n]*Certificate Sign', text), 'Certificate is not a signing CA')
+            algorithm = re.search(r'Public Key Algorithm:\s*([^\n]+)', text)
+            bits = re.search(r'Public-Key:\s*\((\d+) bit\)', text)
+            signature = re.search(r'Signature Algorithm:\s*([^\n]+)', text)
+            require(algorithm and signature, 'Missing CA key/signature')
+            modern = (algorithm[1].strip() == 'rsaEncryption' and bits and int(bits[1]) >= 2048) or (
+                algorithm[1].strip() == 'id-ecPublicKey' and re.search(r'ASN1 OID:\s*(prime256v1|secp384r1|secp521r1)\s', text))
+            require(modern and re.fullmatch(r'sha(?:256|384|512)WithRSAEncryption|ecdsa-with-SHA(?:256|384|512)', signature[1].strip()), 'Weak CA key/signature refused')
+            identities = command(['openssl', 'x509', '-in', str(path), '-noout', '-subject', '-issuer', '-nameopt', 'RFC2253']).splitlines()
+            require(len(identities) == 2 and identities[0].split('=', 1)[1] == identities[1].split('=', 1)[1], 'Root must be self-issued')
+            command(['openssl', 'verify', '-check_ss_sig', '-CAfile', str(path), str(path)])
+            normalized.append(public)
+    return b''.join(normalized)
+try:
+    mode, temporary, root = sys.argv[1:4]
+    names = ('node-endpoint-ca.pem', 'node-endpoint-trust.pem', 'node-endpoint-trust.json')
+    if mode == 'stage':
+        encoded, pins, url = sys.argv[4:7]
+        parsed = urlsplit(url)
+        require(parsed.scheme == 'https' and parsed.hostname and not parsed.username and not parsed.password
+                and parsed.path in ('', '/') and not parsed.query and not parsed.fragment, 'Independent entry requires a plain HTTPS URL')
+        require(len(encoded) <= 45000, 'CA input too large')
+        ca = verify(base64.b64decode(encoded, validate=True), pins)
+        roots = None
+        for candidate in (ssl.get_default_verify_paths().cafile, '/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/certs/ca-bundle.crt'):
+            if candidate and Path(candidate).is_file():
+                roots = Path(candidate).read_bytes()
+                break
+        require(roots and len(roots) <= 4 * 1024 * 1024 and b'PRIVATE KEY' not in roots, 'System public CA bundle unavailable')
+        trust = roots.rstrip() + b'\n' + ca
+        meta = {'tool': 'NodeEndpoint native installer', 'schema': 1, 'url': url,
+                'fingerprints': pins.split(','), 'ca_sha256': hashlib.sha256(ca).hexdigest(),
+                'trust_sha256': hashlib.sha256(trust).hexdigest()}
+    else:
+        paths = [Path(root) / name for name in names]
+        for path in paths: safe(path)
+        require(paths[0].stat().st_size <= 32768 and paths[1].stat().st_size <= 5 * 1024 * 1024
+                and paths[2].stat().st_size <= 4096, 'Stored Node trust too large')
+        ca, trust = paths[0].read_bytes(), paths[1].read_bytes()
+        meta = json.loads(paths[2].read_text())
+        require(meta.get('tool') == 'NodeEndpoint native installer' and meta.get('schema') == 1
+                and meta.get('ca_sha256') == hashlib.sha256(ca).hexdigest()
+                and meta.get('trust_sha256') == hashlib.sha256(trust).hexdigest(), 'Stored Node trust ownership/checksum differs')
+        verify(ca, ','.join(meta['fingerprints']), current=False)
+    if mode != 'check':
+        require(temporary and Path(temporary).is_dir(), 'Private staging directory required')
+        for name, data in zip(names, (ca, trust, json.dumps(meta).encode())):
+            path = Path(temporary) / name
+            with path.open('wb') as handle: handle.write(data)
+            path.chmod(0o600)
+except Exception as error:
+    print('NodeEndpoint CA: ' + str(error), file=sys.stderr)
+    sys.exit(1)
+PY_ENDPOINT_CA
+}
+
+stage_endpoint_trust() {
+    if [ -e "$ENDPOINT_META_PATH" ] || [ -e "$ENDPOINT_CA_PATH" ] || [ -e "$ENDPOINT_TRUST_PATH" ]; then
+        endpoint_ca_helper verify "$TMP_DIR" "$INSTALL_ROOT"
+        ENDPOINT_TRUST=1
+    fi
+    if [ -n "$ENDPOINT_CA_BASE64" ] || [ -n "$ENDPOINT_CA_FINGERPRINT" ]; then
+        [ -n "$ENDPOINT_CA_BASE64" ] && [ -n "$ENDPOINT_CA_FINGERPRINT" ] || { log_error 'Both public CA and independent fingerprints are required'; return 1; }
+        endpoint_ca_helper stage "$TMP_DIR" "$INSTALL_ROOT" "$ENDPOINT_CA_BASE64" "$ENDPOINT_CA_FINGERPRINT" "$PANEL_URL"
+        ENDPOINT_TRUST=1
+    fi
+    if [ "$ENDPOINT_TRUST" -eq 1 ]; then
+        [ "$RELEASE_VERSION" = v1.13-orphan.4 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.4'; return 1; }
+    fi
+}
+
+verify_endpoint_binary() {
+    [ "$ENDPOINT_TRUST" -eq 1 ] || return 0
+    local expected
+    case "$1:$ARCH" in
+        node:amd64) expected=2b37ea5fdfeb721d08b53330134b7a2e072447c10913620da13ceba600d7b772 ;;
+        node:arm64) expected=004b5801338cfb0fd1f56f6b4c39f4ff57468cd012cdab1454abdc7bb31e1327 ;;
+        xbctl:amd64) expected=2ea33645f2f43bf23cdd966989ba01840bdc79a6ad562d522457799bebbd3fb9 ;;
+        xbctl:arm64) expected=16c652558433016adececea6f4fb3d3bfe0692943307cada51742ac3708274fa ;;
+        *) log_error 'Unsupported pinned Node asset'; return 1 ;;
+    esac
+    printf '%s  %s\n' "$expected" "$2" | sha256sum -c - >/dev/null
+}
+
+preflight_endpoint() {
+    [ "$ENDPOINT_TRUST" -eq 1 ] || return 0
+    local identifier code
+    identifier="$NODE_ID"; [ "$MODE" != machine ] || identifier="$MACHINE_ID"
+    printf '%s' "$TOKEN" | python3 -c 'import json,sys; key="machine_id" if sys.argv[1]=="machine" else "node_id"; print(json.dumps({"token":sys.stdin.read(),key:int(sys.argv[2])}))' "$MODE" "$identifier" > "$TMP_DIR/endpoint-auth.json"
+    code=$(curl --silent --show-error --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 20 --max-filesize 1048576 \
+        --cacert "$TMP_DIR/node-endpoint-ca.pem" -H 'Content-Type: application/json' \
+        --data-binary "@$TMP_DIR/endpoint-auth.json" --output "$TMP_DIR/endpoint-handshake.json" --write-out '%{http_code}' \
+        "${PANEL_URL%/}/api/v2/server/handshake")
+    [ "$code" = 200 ] || { log_error "Independent HTTPS entry authentication failed (HTTP $code)"; return 1; }
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d,dict) and isinstance(d.get("websocket"),dict) and isinstance(d["websocket"].get("enabled"),bool)' "$TMP_DIR/endpoint-handshake.json"
+    log_info "Independent HTTPS entry verified: $PANEL_URL"
+}
+
+install_endpoint_trust() {
+    [ "$ENDPOINT_TRUST" -eq 1 ] || return 0
+    install -m 600 "$TMP_DIR/node-endpoint-ca.pem" "$ENDPOINT_CA_PATH"
+    install -m 600 "$TMP_DIR/node-endpoint-trust.pem" "$ENDPOINT_TRUST_PATH"
+    install -m 600 "$TMP_DIR/node-endpoint-trust.json" "$ENDPOINT_META_PATH"
+}
+
 stage_binary() {
     local staged="$TMP_DIR/xboard-node"
     local local_src
@@ -711,6 +874,7 @@ stage_binary() {
         fi
     fi
     chmod +x "$staged"
+    verify_endpoint_binary node "$staged"
     if ! "$staged" -v >/dev/null 2>&1; then
         log_error "Downloaded binary failed version check"
         exit 1
@@ -739,6 +903,7 @@ stage_xbctl() {
         fi
     fi
     chmod +x "$staged"
+    verify_endpoint_binary xbctl "$staged"
     if ! "$staged" version > /dev/null 2>&1; then
         log_error "Downloaded xbctl failed version check"
         exit 1
@@ -776,7 +941,9 @@ render_config() {
     fi
 
     local output
-    output=$("$TMP_DIR/xbctl" "${init_args[@]}") || {
+    local trust="${SSL_CERT_FILE:-}"
+    [ "$ENDPOINT_TRUST" -ne 1 ] || trust="$TMP_DIR/node-endpoint-trust.pem"
+    output=$(SSL_CERT_FILE="$trust" "$TMP_DIR/xbctl" "${init_args[@]}") || {
         log_error "xbctl config init failed"
         exit 1
     }
@@ -809,6 +976,9 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF_UNIT
+    if [ "$ENDPOINT_TRUST" -eq 1 ]; then
+        sed -i "/^EnvironmentFile=/a Environment=SSL_CERT_FILE=$ENDPOINT_TRUST_PATH" "$TMP_DIR/${SERVICE_NAME}"
+    fi
 }
 
 backup_existing_state() {
@@ -837,6 +1007,9 @@ backup_existing_state() {
         SERVICE_EXISTED=0
     fi
     if [ -f "$INSTALLER_COPY_PATH" ]; then cp "$INSTALLER_COPY_PATH" "$pending/install.sh"; fi
+    if [ -f "$ENDPOINT_CA_PATH" ]; then cp "$ENDPOINT_CA_PATH" "$pending/node-endpoint-ca.pem"; fi
+    if [ -f "$ENDPOINT_TRUST_PATH" ]; then cp "$ENDPOINT_TRUST_PATH" "$pending/node-endpoint-trust.pem"; fi
+    if [ -f "$ENDPOINT_META_PATH" ]; then cp "$ENDPOINT_META_PATH" "$pending/node-endpoint-trust.json"; fi
     if owned_node_command; then cp "$NODE_COMMAND_PATH" "$pending/node-menu"; fi
     SERVICE_WAS_ACTIVE=0
     SERVICE_WAS_ENABLED=0
@@ -884,6 +1057,7 @@ install_staged_files() {
     install -m 755 "$TMP_DIR/xboard-node" "$BINARY_PATH"
     install -m 600 "$TMP_DIR/config.yml" "$CONFIG_FILE"
     install -m 600 "$TMP_DIR/credentials.env" "$CREDENTIALS_FILE"
+    install_endpoint_trust
     install -m 644 "$TMP_DIR/install-meta.json" "$INSTALL_META"
     install_management_files
     install -m 755 "$TMP_DIR/xbctl" "$CLI_PATH"
@@ -944,8 +1118,10 @@ perform_install() {
     install_dependencies
     TMP_DIR=$(mktemp -d)
     ensure_dirs
+    stage_endpoint_trust
     stage_binary
     stage_xbctl
+    preflight_endpoint
     render_config
     render_service
     stage_installer
@@ -987,6 +1163,7 @@ perform_upgrade() {
     install_dependencies
     TMP_DIR=$(mktemp -d)
     ensure_dirs
+    stage_endpoint_trust
     stage_binary
     stage_xbctl
     render_service
@@ -995,6 +1172,7 @@ perform_upgrade() {
     stop_existing_service
     install -m 755 "$TMP_DIR/xboard-node" "$BINARY_PATH"
     install -m 755 "$TMP_DIR/xbctl" "$CLI_PATH"
+    install_endpoint_trust
     ln -sf "$CLI_PATH" "$CLI_LINK_PATH"
     install -m 644 "$TMP_DIR/${SERVICE_NAME}" "$SERVICE_PATH"
     install_management_files
@@ -1037,6 +1215,7 @@ perform_uninstall() {
     if owned_cli_link; then rm -f "$CLI_LINK_PATH"; fi
     if owned_node_command; then rm -f "$NODE_COMMAND_PATH"; fi
     rm -f "$CONFIG_FILE" "$CREDENTIALS_FILE" "$INSTALL_META" "$INSTALLER_COPY_PATH"
+    rm -f "$ENDPOINT_CA_PATH" "$ENDPOINT_TRUST_PATH" "$ENDPOINT_META_PATH"
     if [ "$PURGE" -eq 1 ]; then
         log_warn '--purge no longer automatically deletes recovery backups; erase them manually after verification'
     else

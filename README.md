@@ -14,6 +14,18 @@ Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 
 ## Install
 
+### NodeEndpoint 独立 IP 自动对接
+
+面板安装或原生升级 [NodeEndpoint 1.0.1](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/releases/tag/v1.0.1)，完成独立 HTTPS 入口和本机公共 CA 同步后，直接在原生“机器管理”新建机器或复制安装命令，在新的 Node 服务器执行并选择 1 安装。命令使用本项目维护的固定安装源，自动带入通讯 IP/端口、机器身份、公共 CA PEM 与指纹，不再使用 cedar2025/dev 安装器，也无需逐机手工上传 CA。
+
+安装器校验公共 CA 的 SHA-256、用途、自签名和强度，实际预检 HTTPS 身份/主机名；Node 与 xbctl 仍固定使用本仓库 v1.13-orphan.4 Release，并在执行前核对 AMD64/ARM64 资产摘要。仅安装脚本更新，Go 二进制未变。依赖需要 curl、wget、ca-certificates、python3、openssl，缺失时按原安装器流程安装。
+
+公共 CA、合并系统根的 bundle、归属摘要写入 /etc/xboard-node/node-endpoint-{ca.pem,trust.pem,trust.json}，Root 0600，服务通过 SSL_CERT_FILE 使用；升级保留，失败恢复，卸载移除活动文件并保留私有恢复备份。已运行实例不会因面板 CA 变化自动更新，CA 轮换仍需安排双信任更新。
+
+原生机器命令沿用 --token 参数，命令和 Shell 历史属于敏感内容；CA 与指纹同来自已信任的管理员面板，不构成额外带外信任。该流程用于新机器，旧安装的 REPLACE 会替换全部本机旧绑定，已有生产实例请按 NodeEndpoint 的迁移流程处理。关闭 TLS 验证不能作为 IP 对接方式。
+
+验证：30 项原生插件组件、Bash 20 项中 19 通过/1 隔离路径跳过、Linux Root CA 7 项；两 VM 的真实 IP HTTPS、NodeWorker WSS auth.success、升级保留、故障回滚和卸载通过。机器未绑定业务代理节点，本轮未复测代理/计量/UUID；既有固定 Go 的 UUID 缺陷仍保留。详见 [完整本轮报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/NATIVE_MACHINE_TEST_REPORT.md)。
+
 ### Installer (Linux systemd)
 
 在服务器的 **Bash SSH 终端**执行一条命令：
