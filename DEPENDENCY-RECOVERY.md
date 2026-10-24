@@ -2,6 +2,8 @@
 
 本指南只修改和构建当前 Node 仓库。不要将 Module Proxy、Go 缓存、Token 或运行配置提交 Git。Python 3.9+ 为日常工具依赖；Go 版本至少满足 go.mod（当前 1.26），安装器仍使用原来的 systemd 和本地二进制方式。
 
+限速维护补丁由 [patches/xray-core](patches/xray-core/README.md) 保存，正常 Make/CI/Docker 构建和恢复测试会校验原始源码及补丁，生成私有 modfile 使用维护副本。原 `go.mod`、`go.sum` 和历史依赖 ZIP 保持不变；不要直接绕过构建工具使用未应用补丁的核心。
+
 ## 已保护与仍需联网的内容
 
 完整清单见 `DEPENDENCY-AUDIT.md`、`dependency-lock.json`。当前完整保护 127 个模块，包含 5 个 C 类、当前可达中风险和待复核模块。114 个 A 类模块默认源码联网，其中实际当前构建/测试使用 52 个；其他未使用平台/功能的图依赖只保存元数据，扩展构建范围前须重新审计。

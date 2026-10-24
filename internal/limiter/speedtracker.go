@@ -21,9 +21,9 @@ type SpeedTracker struct {
 	buckets map[int]*rate.Limiter // userID → shared rate limiter
 	uuidMap map[string]int        // UUID → userID
 
-	// Fast-path: when no users have a speed limit, GetLimiter returns nil
-	// immediately without any map lookup.
-	hasLimits atomic.Bool
+	// These describe configured limits, not the number of stable bucket handles.
+	hasLimits    atomic.Bool
+	limitedUsers int
 
 	// Optional callback for logging
 	logFunc SpeedTrackerLogCallback
@@ -59,25 +59,28 @@ func (t *SpeedTracker) UpdateBuckets() {
 		newUUIDMap := make(map[string]int, len(currentUsers))
 		activeIDs := make(map[int]struct{}, len(currentUsers))
 
+		limitedUsers := 0
 		for _, user := range currentUsers {
 			activeIDs[user.ID] = struct{}{}
 			if user.UUID != "" {
 				newUUIDMap[user.UUID] = user.ID
 			}
 
-			// Update existing limiter if speed changed
+			limit, burst := rate.Inf, 64*1024
+			if user.SpeedLimit > 0 {
+				bytesPerSec := user.SpeedLimit * 125_000
+				limit = rate.Limit(bytesPerSec)
+				burst = max(bytesPerSec, 64*1024)
+				limitedUsers++
+			}
+			// Every known user gets a stable handle, including unlimited users.
+			// Existing TCP/UDP streams keep this pointer across 0 <-> positive
+			// updates instead of retaining nil or an obsolete finite bucket.
 			if lim, ok := t.buckets[user.ID]; ok {
-				if user.SpeedLimit > 0 {
-					bytesPerSec := int(user.SpeedLimit) * 1_000_000 / 8
-					burst := bytesPerSec
-					if burst < 64*1024 {
-						burst = 64 * 1024
-					}
-					lim.SetLimit(rate.Limit(bytesPerSec))
-					lim.SetBurst(burst)
-				} else {
-					delete(t.buckets, user.ID)
-				}
+				lim.SetBurst(burst)
+				lim.SetLimit(limit)
+			} else {
+				t.buckets[user.ID] = rate.NewLimiter(limit, burst)
 			}
 		}
 
@@ -89,7 +92,8 @@ func (t *SpeedTracker) UpdateBuckets() {
 		}
 
 		t.uuidMap = newUUIDMap
-		t.hasLimits.Store(len(t.buckets) > 0)
+		t.limitedUsers = limitedUsers
+		t.hasLimits.Store(limitedUsers > 0)
 	}()
 
 	if t.logFunc != nil {
@@ -97,54 +101,18 @@ func (t *SpeedTracker) UpdateBuckets() {
 	}
 }
 
-// GetLimiter returns the rate limiter for the given user UUID, or nil if
-// no limit applies. Creates limiter on-demand if not exists.
+// GetLimiter returns a stable handle for a known user, or nil for an unknown
+// user. An unlimited user's handle uses rate.Inf so existing streams can be
+// throttled as soon as their settings change.
 // Thread-safe.
 func (t *SpeedTracker) GetLimiter(user string) *rate.Limiter {
 	t.mu.RLock()
+	defer t.mu.RUnlock()
 	uid, exists := t.uuidMap[user]
 	if !exists {
-		t.mu.RUnlock()
 		return nil
 	}
-	if lim, ok := t.buckets[uid]; ok {
-		t.mu.RUnlock()
-		return lim
-	}
-	t.mu.RUnlock()
-
-	// Get user info from limiter
-	t.limiter.mu.RLock()
-	u, userExists := t.limiter.users[uid]
-	t.limiter.mu.RUnlock()
-
-	if !userExists || u.SpeedLimit <= 0 {
-		return nil
-	}
-
-	// Create limiter on-demand
-	bytesPerSec := int(u.SpeedLimit) * 1_000_000 / 8
-	burst := bytesPerSec
-	if burst < 64*1024 {
-		burst = 64 * 1024
-	}
-	if cap4s := bytesPerSec * 4; cap4s > 64*1024 && burst > cap4s {
-		burst = cap4s
-	}
-
-	lim := rate.NewLimiter(rate.Limit(bytesPerSec), burst)
-
-	t.mu.Lock()
-	// Double-check after acquiring write lock
-	if existing, ok := t.buckets[uid]; ok {
-		t.mu.Unlock()
-		return existing
-	}
-	t.buckets[uid] = lim
-	t.hasLimits.Store(true)
-	t.mu.Unlock()
-
-	return lim
+	return t.buckets[uid]
 }
 
 // HasLimits returns true if any user currently has a speed limit configured.
@@ -156,5 +124,5 @@ func (t *SpeedTracker) HasLimits() bool {
 func (t *SpeedTracker) LimitedUserCount() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return len(t.buckets)
+	return t.limitedUsers
 }

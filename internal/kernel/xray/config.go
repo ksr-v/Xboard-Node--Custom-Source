@@ -731,6 +731,12 @@ func compileCustomRouteRule(rule model.CustomRouteRule) []M {
 			if value == "" {
 				continue
 			}
+			// Xray treats bare domains as substring matches. Structured domains
+			// promise an exact match; retain explicit native matchers for existing
+			// configurations (including panel geosite entries).
+			if !hasXrayDomainPrefix(value) {
+				value = "full:" + value
+			}
 			domains = append(domains, value)
 		}
 		for _, value := range rule.Match.DomainSuffixes {
@@ -784,6 +790,15 @@ func compileCustomRouteRule(rule model.CustomRouteRule) []M {
 		})
 	}
 	return compiled
+}
+
+func hasXrayDomainPrefix(value string) bool {
+	for _, prefix := range []string{"full:", "domain:", "keyword:", "regexp:", "geosite:", "ext:", "ext-domain:"} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func xrayOutboundForAction(action model.RouteAction) string {

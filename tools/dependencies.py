@@ -474,6 +474,8 @@ def build(dest, arch, test=False, host=False, isolated=False):
         raise ValueError('Use recovery-test for enforced isolation')
     if not host:
         env.update(GOOS='linux', GOARCH=arch, CGO_ENABLED='0')
+    from kernel_patches import prepare
+    env['GOFLAGS'] = prepare(env, ROOT)
     if test:
         run(['go', 'test', '-tags', TAGS, '-count=1', './internal/...'], env, capture=False)
         # Preserve the original race check on Linux hosts with a C toolchain.

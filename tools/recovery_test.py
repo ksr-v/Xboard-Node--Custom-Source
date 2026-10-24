@@ -100,6 +100,8 @@ def recovery_test(snapshot, compiler_cache=None):
         # including host-only dependencies, and authenticate it with go.sum/sumdb.
         modules = [r['path'] + '@' + r['version'] for r in manifest['modules'] if r['backup']]
         execute('protected-download', ['go', 'mod', 'download'] + modules, env)
+        from kernel_patches import prepare
+        env['GOFLAGS'] = prepare(env, stage)
         for arch in ('amd64', 'arm64'):
             target = dict(env, GOOS='linux', GOARCH=arch)
             for name in ('xboard-node', 'xbctl'):

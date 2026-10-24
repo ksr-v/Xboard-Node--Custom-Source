@@ -144,7 +144,8 @@ class RecoveryToolsTest(unittest.TestCase):
     def test_release_builds_remove_local_source_paths(self):
         build_policy = dict(d.policy(), public_proxy='https://proxy.example.com')
         with mock.patch.object(d, 'policy', return_value=build_policy), \
-                mock.patch.object(d, 'run', return_value='fixture-commit') as execute:
+                mock.patch.object(d, 'run', return_value='fixture-commit') as execute, \
+                mock.patch('kernel_patches.prepare', return_value='-mod=readonly -overlay=fixture.json'):
             for arch in ('amd64', 'arm64'):
                 d.build(self.snapshot, arch)
         commands = [call.args[0] for call in execute.call_args_list if call.args[0][:2] == ['go', 'build']]
@@ -170,7 +171,8 @@ class RecoveryToolsTest(unittest.TestCase):
                 (Path(cwd) / 'go.sum').write_bytes(b'changed by simulated build\n')
             return SimpleNamespace(returncode=0, stdout='go version simulated\n', stderr='')
 
-        with mock.patch.object(recovery_test.subprocess, 'run', side_effect=successful_command):
+        with mock.patch.object(recovery_test.subprocess, 'run', side_effect=successful_command), \
+                mock.patch('kernel_patches.prepare', return_value='-mod=readonly -overlay=fixture.json'):
             with self.assertRaisesRegex(ValueError, 'changed go.mod/go.sum'):
                 recovery_test.recovery_test(self.snapshot)
         evidence = json.loads(next(d.STATE.glob('recovery-*/results.json')).read_text())

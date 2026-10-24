@@ -1,10 +1,12 @@
 package limiter
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cedar2025/xboard-node/internal/model"
+	"golang.org/x/time/rate"
 )
 
 func TestSpeedTracker_UpdateBuckets(t *testing.T) {
@@ -34,10 +36,13 @@ func TestSpeedTracker_UpdateBuckets(t *testing.T) {
 		t.Errorf("user 1 burst: got %v, want %v", b1.Burst(), expectedBurst)
 	}
 
-	// User 2: no speed limit, no bucket
+	// Unlimited users retain a handle so existing streams can be limited later.
 	b2 := st.GetLimiter("u2")
-	if b2 != nil {
-		t.Fatal("expected no bucket for user 2")
+	if b2 == nil || b2.Limit() != rate.Inf {
+		t.Fatal("expected unlimited bucket for user 2")
+	}
+	if !st.HasLimits() || st.LimitedUserCount() != 2 {
+		t.Fatal("configured limit counts must exclude unlimited handles")
 	}
 
 	// User 3: 10 Mbps = 1250000 bytes/sec
@@ -54,6 +59,62 @@ func TestSpeedTracker_UpdateBuckets(t *testing.T) {
 	if b3.Burst() != expectedBurst3 {
 		t.Errorf("user 3 burst: got %v, want %v", b3.Burst(), expectedBurst3)
 	}
+}
+
+func TestSpeedTrackerExistingHandleSurvivesEnableAndDisable(t *testing.T) {
+	l := New()
+	st := NewSpeedTracker(l)
+	update := func(speed int) {
+		l.UpdateUsers([]model.UserSpec{{ID: 1, UUID: "u1", SpeedLimit: speed}})
+		st.UpdateBuckets()
+	}
+	update(0)
+	existing := st.GetLimiter("u1")
+	if existing == nil || existing.Limit() != rate.Inf || st.HasLimits() || st.LimitedUserCount() != 0 {
+		t.Fatal("unlimited user's stable handle/count is incorrect")
+	}
+	for _, speed := range []int{8, 16, 0, 8, 0} {
+		update(speed)
+		if st.GetLimiter("u1") != existing {
+			t.Fatal("changing speed replaced a handle cached by an existing stream")
+		}
+		if speed == 0 {
+			if existing.Limit() != rate.Inf || st.HasLimits() || st.LimitedUserCount() != 0 {
+				t.Fatal("disabling speed must update existing handle and configured counts")
+			}
+		} else if existing.Limit() != rate.Limit(speed*125_000) || !st.HasLimits() || st.LimitedUserCount() != 1 {
+			t.Fatal("enabling speed must update existing handle and configured counts")
+		}
+	}
+}
+
+func TestSpeedTrackerConcurrentLookupAndUpdates(t *testing.T) {
+	l := New()
+	st := NewSpeedTracker(l)
+	l.UpdateUsers([]model.UserSpec{{ID: 1, UUID: "u1"}})
+	st.UpdateBuckets()
+	existing := st.GetLimiter("u1")
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 200 {
+				if st.GetLimiter("u1") != existing {
+					t.Error("lookup lost stable handle")
+				}
+				_ = existing.Limit()
+				_ = existing.Burst()
+				_ = st.HasLimits()
+				_ = st.LimitedUserCount()
+			}
+		}()
+	}
+	for i := range 200 {
+		l.UpdateUsers([]model.UserSpec{{ID: 1, UUID: "u1", SpeedLimit: (i % 3) * 8}})
+		st.UpdateBuckets()
+	}
+	wg.Wait()
 }
 
 func TestSpeedTracker_UpdateBuckets_PreservesExisting(t *testing.T) {

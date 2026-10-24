@@ -349,7 +349,7 @@ func TestBuildRouting_WithCustomRouteRules(t *testing.T) {
 	if xrayRules[0]["outboundTag"] != "warp-jp" {
 		t.Fatalf("expected first custom outbound warp-jp, got %v", xrayRules[0]["outboundTag"])
 	}
-	if got := xrayRules[0]["domain"].([]string); len(got) != 2 || got[0] != "full.example.com" || got[1] != "domain:example.org" {
+	if got := xrayRules[0]["domain"].([]string); len(got) != 2 || got[0] != "full:full.example.com" || got[1] != "domain:example.org" {
 		t.Fatalf("unexpected custom domains: %v", got)
 	}
 	if got := xrayRules[1]["port"]; got != "80,443-445" {

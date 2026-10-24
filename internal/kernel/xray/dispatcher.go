@@ -29,6 +29,9 @@ var typeCreatorRegistry map[reflect.Type]common.ConfigCreator
 
 var origDispatcherFactory common.ConfigCreator
 
+// Build tooling must apply the checksum-verified maintained core patch.
+const _ = xrayDispatcher.NodeEndpointBandwidthRevision
+
 // globalLimitDispatcher is set when the factory creates a LimitDispatcher.
 // The Xray kernel reads it to configure limits and get connections.
 var globalLimitDispatcher atomic.Pointer[LimitDispatcher]

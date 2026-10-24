@@ -15,6 +15,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"golang.org/x/time/rate"
 
+	"github.com/cedar2025/xboard-node/internal/limiter"
 	"github.com/cedar2025/xboard-node/internal/nlog"
 )
 
@@ -109,23 +110,22 @@ func (u *userStats) aliveIPList() map[string]bool {
 // ConnTracker provides per-user traffic counting, alive IP tracking, device
 // limit gate-keeping, and per-user speed limiting for the sing-box kernel.
 //
-// Architecture: instead of maintaining a per-connection map (O(connections)),
-// it maintains per-user atomic counters and IP refcount sets (O(users)).
+// Traffic accounting uses per-user atomic counters and IP refcount sets.
+// A separate connection registry supports immediate policy invalidation.
 // This means:
 //   - GetUserTraffic is O(users), not O(connections)
 //   - No Snapshot/pending buffer needed
-//   - No per-connection map lock contention
-//   - Bytes are counted directly into per-user atomics via CountFunc callbacks
+//   - Bytes are counted directly into per-user atomics
 //
 // The per-connection wrapper (trackedConn) is still needed for:
-//   - Hooking into sing's ReadCounter/WriteCounter for zero-copy byte counting
+//   - Keeping live I/O gates in place across unlimited/limited changes
 //   - Close callback to decrement IP refcounts
-//   - Per-connection rate limit token accumulation (amortized WaitN)
+//   - Bounded reservations shared across all connections of the same user
 type ConnTracker struct {
 	usersMu sync.RWMutex
-	users   map[int]*userStats  // userID → stats
-	uuidMap map[string]int      // UUID → userID (for lookup in RoutedConnection)
-	connMap map[string]net.Conn // connID → conn (only for force-close support)
+	users   map[int]*userStats   // userID → stats
+	uuidMap map[string]int       // UUID → userID (for lookup in RoutedConnection)
+	connMap map[string]io.Closer // connID → conn (only for force-close support)
 
 	idCounter atomic.Int64
 
@@ -146,7 +146,7 @@ func NewConnTracker(_ int) *ConnTracker {
 	return &ConnTracker{
 		users:         make(map[int]*userStats),
 		uuidMap:       make(map[string]int),
-		connMap:       make(map[string]net.Conn),
+		connMap:       make(map[string]io.Closer),
 		globalDevices: make(map[int]map[string]bool),
 	}
 }
@@ -236,17 +236,13 @@ func (t *ConnTracker) RoutedConnection(
 
 	connID := t.nextID()
 
-	// Store conn reference for force-close support
-	t.usersMu.Lock()
-	t.connMap[connID] = conn
-	t.usersMu.Unlock()
-
 	var lim *rate.Limiter
 	if slf := t.speedLimitFunc.Load(); slf != nil {
 		lim = (*slf)(uuid)
 	}
 
-	return &trackedConn{
+	ctx, cancel := context.WithCancel(ctx)
+	tracked := &trackedConn{
 		Conn:     conn,
 		tracker:  t,
 		us:       us,
@@ -255,13 +251,16 @@ func (t *ConnTracker) RoutedConnection(
 		sourceIP: sourceIP,
 		limiter:  lim,
 		ctx:      ctx,
+		cancel:   cancel,
 	}
+	t.usersMu.Lock()
+	t.connMap[connID] = tracked
+	t.usersMu.Unlock()
+	return tracked
 }
 
-// RoutedPacketConnection wraps UDP with per-user counting (UDP not in connMap).
-// Note: UDP connections are NOT stored in connMap because connMap is typed as
-// map[string]net.Conn, but PacketConn is a different interface. Force-close
-// for UDP connections is handled directly via trackedPacketConn.Close().
+// RoutedPacketConnection tracks UDP alongside TCP so a routing change can
+// close every old flow before accepting traffic under the new policy.
 func (t *ConnTracker) RoutedPacketConnection(
 	ctx context.Context, conn N.PacketConn,
 	metadata adapter.InboundContext,
@@ -298,7 +297,8 @@ func (t *ConnTracker) RoutedPacketConnection(
 		lim = (*slf)(uuid)
 	}
 
-	return &trackedPacketConn{
+	ctx, cancel := context.WithCancel(ctx)
+	tracked := &trackedPacketConn{
 		PacketConn: conn,
 		tracker:    t,
 		us:         us,
@@ -307,7 +307,12 @@ func (t *ConnTracker) RoutedPacketConnection(
 		sourceIP:   sourceIP,
 		limiter:    lim,
 		ctx:        ctx,
+		cancel:     cancel,
 	}
+	t.usersMu.Lock()
+	t.connMap[connID] = tracked
+	t.usersMu.Unlock()
+	return tracked
 }
 
 // checkDeviceGate rejects connections exceeding device limit.
@@ -454,6 +459,24 @@ func (t *ConnTracker) CloseByID(id string) bool {
 	return true
 }
 
+// CloseAll invalidates both TCP and UDP flows after a routing policy change.
+// Close may re-enter removeConnRef, so invoke it outside usersMu.
+func (t *ConnTracker) CloseAll() int {
+	t.usersMu.Lock()
+	conns := make([]io.Closer, 0, len(t.connMap))
+	for _, conn := range t.connMap {
+		conns = append(conns, conn)
+	}
+	clear(t.connMap)
+	t.usersMu.Unlock()
+	for _, conn := range conns {
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}
+	return len(conns)
+}
+
 // CloseByUUID force-closes ALL connections for a given user UUID.
 func (t *ConnTracker) CloseByUUID(uuid string) int {
 	// This is a no-op for now — sing-box doesn't expose per-user connection
@@ -484,74 +507,51 @@ func (t *ConnTracker) removeConnRef(connID string) {
 
 // ─── trackedConn (TCP) ──────────────────────────────────────────────────────
 
-// RateLimitedWriter wraps a Writer with non-blocking rate limiting.
-// Uses AllowN for instant checks and context-aware waiting when needed.
+// RateLimitedWriter wraps a writer with a shared, dynamically updated bucket.
 type RateLimitedWriter struct {
 	writer  io.Writer
 	limiter *rate.Limiter
 	ctx     context.Context
 }
 
-// Write implements io.Writer with rate limiting.
 func (w *RateLimitedWriter) Write(b []byte) (int, error) {
-	// Truncate to burst size
-	if burst := w.limiter.Burst(); len(b) > burst {
-		b = b[:burst]
-	}
-
-	// Fast path: check if tokens available (non-blocking)
-	if w.limiter.AllowN(time.Now(), len(b)) {
-		return w.writer.Write(b)
-	}
-
-	// Slow path: wait for tokens with context cancellation support
-	resv := w.limiter.ReserveN(time.Now(), len(b))
-	if delay := resv.Delay(); delay > 0 {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-			// Tokens available, proceed
-		case <-w.ctx.Done():
-			resv.Cancel()
-			return 0, w.ctx.Err()
-		}
-	}
-
-	return w.writer.Write(b)
+	return writeLimited(w.ctx, w.writer, w.limiter, b)
 }
 
-// RateLimitedReadCloser wraps a Reader with non-blocking rate limiting.
+// writeLimited preserves io.Writer's full-write contract while bounding each
+// forwarded block. A burst change cannot produce a short successful write.
+func writeLimited(ctx context.Context, writer io.Writer, lim *rate.Limiter, b []byte) (int, error) {
+	written := 0
+	for len(b) > 0 {
+		chunk := b[:min(len(b), 16*1024)]
+		if err := limiter.WaitN(ctx, lim, int64(len(chunk))); err != nil {
+			return written, err
+		}
+		n, err := writer.Write(chunk)
+		written += n
+		if err != nil {
+			return written, err
+		}
+		if n != len(chunk) {
+			return written, io.ErrShortWrite
+		}
+		b = b[n:]
+	}
+	return written, nil
+}
+
+// RateLimitedReadCloser wraps a reader with a shared, dynamic bucket.
 type RateLimitedReadCloser struct {
 	reader  io.Reader
 	limiter *rate.Limiter
 	ctx     context.Context
 }
 
-// Read implements io.Reader with rate limiting.
 func (r *RateLimitedReadCloser) Read(b []byte) (int, error) {
-	// Truncate to burst size
-	if burst := r.limiter.Burst(); len(b) > burst {
-		b = b[:burst]
-	}
-
 	n, err := r.reader.Read(b)
-	if n > 0 && r.limiter != nil {
-		// Fast path: check if tokens available
-		if !r.limiter.AllowN(time.Now(), n) {
-			// Slow path: wait with context cancellation
-			resv := r.limiter.ReserveN(time.Now(), n)
-			if delay := resv.Delay(); delay > 0 {
-				timer := time.NewTimer(delay)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					// Tokens available
-				case <-r.ctx.Done():
-					resv.Cancel()
-					return n, r.ctx.Err()
-				}
-			}
+	if n > 0 {
+		if waitErr := limiter.WaitN(r.ctx, r.limiter, int64(n)); waitErr != nil {
+			return n, waitErr
 		}
 	}
 	return n, err
@@ -566,73 +566,41 @@ type trackedConn struct {
 	sourceIP string
 	limiter  *rate.Limiter
 	ctx      context.Context
+	cancel   context.CancelFunc
 	closed   atomic.Bool
 }
 
 func (c *trackedConn) Read(b []byte) (int, error) {
-	if c.limiter != nil {
-		if burst := c.limiter.Burst(); len(b) > burst {
-			b = b[:burst]
-		}
+	// Bound an in-flight read even while currently unlimited. Existing streams
+	// must retain this gate when a limit is enabled later.
+	if c.limiter != nil && len(b) > 16*1024 {
+		b = b[:16*1024]
 	}
 	n, err := c.Conn.Read(b)
 	if n > 0 {
 		if c.us != nil {
-			c.us.upload.Add(int64(n)) // 从入站读取 = 用户上传
+			c.us.upload.Add(int64(n))
 		}
-		if c.limiter != nil {
-			// Non-blocking rate limiting
-			if !c.limiter.AllowN(time.Now(), n) {
-				resv := c.limiter.ReserveN(time.Now(), n)
-				if delay := resv.Delay(); delay > 0 {
-					timer := time.NewTimer(delay)
-					defer timer.Stop()
-					select {
-					case <-timer.C:
-						// Tokens available
-					case <-c.ctx.Done():
-						resv.Cancel()
-						return n, c.ctx.Err()
-					}
-				}
-			}
+		if waitErr := limiter.WaitN(c.ctx, c.limiter, int64(n)); waitErr != nil {
+			return n, waitErr
 		}
 	}
 	return n, err
 }
 
 func (c *trackedConn) Write(b []byte) (int, error) {
-	// Apply rate limiting before write
-	if c.limiter != nil {
-		if burst := c.limiter.Burst(); len(b) > burst {
-			b = b[:burst]
-		}
-		// Non-blocking check first
-		if !c.limiter.AllowN(time.Now(), len(b)) {
-			resv := c.limiter.ReserveN(time.Now(), len(b))
-			if delay := resv.Delay(); delay > 0 {
-				timer := time.NewTimer(delay)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					// Tokens available
-				case <-c.ctx.Done():
-					resv.Cancel()
-					return 0, c.ctx.Err()
-				}
-			}
-		}
-	}
-
-	n, err := c.Conn.Write(b)
+	n, err := writeLimited(c.ctx, c.Conn, c.limiter, b)
 	if n > 0 && c.us != nil {
-		c.us.download.Add(int64(n)) // 向入站写入 = 用户下载
+		c.us.download.Add(int64(n))
 	}
 	return n, err
 }
 
 func (c *trackedConn) Close() error {
 	if c.closed.CompareAndSwap(false, true) {
+		if c.cancel != nil {
+			c.cancel()
+		}
 		if c.us != nil {
 			c.us.removeConn(c.sourceIP)
 		}
@@ -644,29 +612,18 @@ func (c *trackedConn) Close() error {
 // makeCountFunc builds a CountFunc for zero-copy byte counting via sing's
 // ReadCounter/WriteCounter unwrap interfaces.
 func (c *trackedConn) makeCountFunc(counter *atomic.Int64) N.CountFunc {
-	if c.limiter == nil {
-		return func(n int64) { counter.Add(n) }
-	}
 	return func(n int64) {
 		counter.Add(n)
-		// Non-blocking rate limiting with context cancellation
-		if !c.limiter.AllowN(time.Now(), int(n)) {
-			resv := c.limiter.ReserveN(time.Now(), int(n))
-			if delay := resv.Delay(); delay > 0 {
-				timer := time.NewTimer(delay)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					// Tokens available
-				case <-c.ctx.Done():
-					resv.Cancel()
-				}
-			}
-		}
+		// CountFunc cannot return an error; cancellation stops the wait and
+		// the closing transport terminates its copy loop.
+		_ = limiter.WaitN(c.ctx, c.limiter, n)
 	}
 }
 
 func (c *trackedConn) UnwrapReader() (io.Reader, []N.CountFunc) {
+	if c.limiter != nil {
+		return trackedReaderView{c}, nil
+	}
 	if c.us == nil {
 		return c.Conn, nil
 	}
@@ -674,6 +631,9 @@ func (c *trackedConn) UnwrapReader() (io.Reader, []N.CountFunc) {
 }
 
 func (c *trackedConn) UnwrapWriter() (io.Writer, []N.CountFunc) {
+	if c.limiter != nil {
+		return trackedWriterView{c}, nil
+	}
 	if c.us == nil {
 		return c.Conn, nil
 	}
@@ -681,8 +641,19 @@ func (c *trackedConn) UnwrapWriter() (io.Writer, []N.CountFunc) {
 }
 
 func (c *trackedConn) Upstream() any           { return c.Conn }
-func (c *trackedConn) ReaderReplaceable() bool { return true }
-func (c *trackedConn) WriterReplaceable() bool { return true }
+func (c *trackedConn) ReaderReplaceable() bool { return c.limiter == nil }
+func (c *trackedConn) WriterReplaceable() bool { return c.limiter == nil }
+
+// Counter callbacks run after splice has already forwarded the bytes. These
+// opaque views preserve the actual I/O gates, including for unlimited streams
+// that may be limited later, without exposing another unwrap/counter layer.
+type trackedReaderView struct{ conn *trackedConn }
+
+func (v trackedReaderView) Read(b []byte) (int, error) { return v.conn.Read(b) }
+
+type trackedWriterView struct{ conn *trackedConn }
+
+func (v trackedWriterView) Write(b []byte) (int, error) { return v.conn.Write(b) }
 
 // ─── trackedPacketConn (UDP / QUIC) ─────────────────────────────────────────
 
@@ -695,6 +666,7 @@ type trackedPacketConn struct {
 	sourceIP string
 	limiter  *rate.Limiter
 	ctx      context.Context
+	cancel   context.CancelFunc
 	closed   atomic.Bool
 }
 
@@ -703,24 +675,10 @@ func (c *trackedPacketConn) ReadPacket(buffer *buf.Buffer) (singM.Socksaddr, err
 	if err == nil {
 		n := int64(buffer.Len())
 		if c.us != nil {
-			c.us.upload.Add(n) // 从入站读取 = 用户上传
+			c.us.upload.Add(n)
 		}
-		if c.limiter != nil {
-			// Non-blocking rate limiting with context cancellation
-			if !c.limiter.AllowN(time.Now(), int(n)) {
-				resv := c.limiter.ReserveN(time.Now(), int(n))
-				if delay := resv.Delay(); delay > 0 {
-					timer := time.NewTimer(delay)
-					defer timer.Stop()
-					select {
-					case <-timer.C:
-						// Tokens available
-					case <-c.ctx.Done():
-						resv.Cancel()
-						return dest, c.ctx.Err()
-					}
-				}
-			}
+		if waitErr := limiter.WaitN(c.ctx, c.limiter, n); waitErr != nil {
+			return dest, waitErr
 		}
 	}
 	return dest, err
@@ -728,34 +686,21 @@ func (c *trackedPacketConn) ReadPacket(buffer *buf.Buffer) (singM.Socksaddr, err
 
 func (c *trackedPacketConn) WritePacket(buffer *buf.Buffer, dest singM.Socksaddr) error {
 	n := int64(buffer.Len())
-
-	// Apply rate limiting before write
-	if c.limiter != nil {
-		if !c.limiter.AllowN(time.Now(), int(n)) {
-			resv := c.limiter.ReserveN(time.Now(), int(n))
-			if delay := resv.Delay(); delay > 0 {
-				timer := time.NewTimer(delay)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					// Tokens available
-				case <-c.ctx.Done():
-					resv.Cancel()
-					return c.ctx.Err()
-				}
-			}
-		}
+	if err := limiter.WaitN(c.ctx, c.limiter, n); err != nil {
+		return err
 	}
-
 	err := c.PacketConn.WritePacket(buffer, dest)
 	if err == nil && c.us != nil {
-		c.us.download.Add(n) // 向入站写入 = 用户下载
+		c.us.download.Add(n)
 	}
 	return err
 }
 
 func (c *trackedPacketConn) Close() error {
 	if c.closed.CompareAndSwap(false, true) {
+		if c.cancel != nil {
+			c.cancel()
+		}
 		if c.us != nil {
 			c.us.removeConn(c.sourceIP)
 		}
@@ -765,29 +710,18 @@ func (c *trackedPacketConn) Close() error {
 }
 
 func (c *trackedPacketConn) makeCountFunc(counter *atomic.Int64) N.CountFunc {
-	if c.limiter == nil {
-		return func(n int64) { counter.Add(n) }
-	}
 	return func(n int64) {
 		counter.Add(n)
-		// Non-blocking rate limiting with context cancellation
-		if !c.limiter.AllowN(time.Now(), int(n)) {
-			resv := c.limiter.ReserveN(time.Now(), int(n))
-			if delay := resv.Delay(); delay > 0 {
-				timer := time.NewTimer(delay)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					// Tokens available
-				case <-c.ctx.Done():
-					resv.Cancel()
-				}
-			}
-		}
+		// CountFunc cannot return an error; cancellation stops the wait and
+		// the closing transport terminates its copy loop.
+		_ = limiter.WaitN(c.ctx, c.limiter, n)
 	}
 }
 
 func (c *trackedPacketConn) UnwrapPacketReader() (N.PacketReader, []N.CountFunc) {
+	if c.limiter != nil {
+		return trackedPacketReaderView{c}, nil
+	}
 	if c.us == nil {
 		return c.PacketConn, nil
 	}
@@ -795,6 +729,9 @@ func (c *trackedPacketConn) UnwrapPacketReader() (N.PacketReader, []N.CountFunc)
 }
 
 func (c *trackedPacketConn) UnwrapPacketWriter() (N.PacketWriter, []N.CountFunc) {
+	if c.limiter != nil {
+		return trackedPacketWriterView{c}, nil
+	}
 	if c.us == nil {
 		return c.PacketConn, nil
 	}
@@ -802,5 +739,17 @@ func (c *trackedPacketConn) UnwrapPacketWriter() (N.PacketWriter, []N.CountFunc)
 }
 
 func (c *trackedPacketConn) Upstream() any           { return c.PacketConn }
-func (c *trackedPacketConn) ReaderReplaceable() bool { return true }
-func (c *trackedPacketConn) WriterReplaceable() bool { return true }
+func (c *trackedPacketConn) ReaderReplaceable() bool { return c.limiter == nil }
+func (c *trackedPacketConn) WriterReplaceable() bool { return c.limiter == nil }
+
+type trackedPacketReaderView struct{ conn *trackedPacketConn }
+
+func (v trackedPacketReaderView) ReadPacket(b *buf.Buffer) (singM.Socksaddr, error) {
+	return v.conn.ReadPacket(b)
+}
+
+type trackedPacketWriterView struct{ conn *trackedPacketConn }
+
+func (v trackedPacketWriterView) WritePacket(b *buf.Buffer, destination singM.Socksaddr) error {
+	return v.conn.WritePacket(b, destination)
+}

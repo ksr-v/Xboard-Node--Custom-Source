@@ -20,11 +20,13 @@ type fakeKernel struct {
 	startErr  error
 	updateErr error
 	addErr    error
+	reloadErr error
 
 	startCalls  int
 	updateCalls int
 	addCalls    int
 	removeCalls int
+	reloadCalls int
 
 	onUpdateUsers func([]model.UserSpec)
 	onAddUsers    func([]model.UserSpec)
@@ -34,8 +36,8 @@ type fakeKernel struct {
 	deviceLimitFunc func(string) (int, bool)
 }
 
-func (f *fakeKernel) Name() string { return "fake" }
-func (f *fakeKernel) Protocols() []string { return []string{"vless"} }
+func (f *fakeKernel) Name() string                      { return "fake" }
+func (f *fakeKernel) Protocols() []string               { return []string{"vless"} }
 func (f *fakeKernel) Capabilities() kernel.Capabilities { return kernel.Capabilities{} }
 func (f *fakeKernel) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
 	_, _, _ = nodeConfig, users, tls
@@ -46,11 +48,12 @@ func (f *fakeKernel) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, t
 	f.running = true
 	return nil
 }
-func (f *fakeKernel) Stop() { f.running = false }
+func (f *fakeKernel) Stop()           { f.running = false }
 func (f *fakeKernel) IsRunning() bool { return f.running }
 func (f *fakeKernel) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
 	_, _, _ = nodeConfig, users, tls
-	return nil
+	f.reloadCalls++
+	return f.reloadErr
 }
 func (f *fakeKernel) AddUsers(users []model.UserSpec) (int, error) {
 	f.addCalls++
@@ -92,9 +95,9 @@ func (f *fakeKernel) CloseUserConnections(ctx context.Context, uuid string) erro
 	return nil
 }
 func (f *fakeKernel) SetSpeedLimitFunc(fn func(uuid string) *rate.Limiter) { f.speedLimitFunc = fn }
-func (f *fakeKernel) SetDeviceLimitFunc(fn func(uuid string) (int, bool)) { f.deviceLimitFunc = fn }
-func (f *fakeKernel) UpdateGlobalDevices(users map[int][]string) { _ = users }
-func (f *fakeKernel) ClearGlobalDevices() {}
+func (f *fakeKernel) SetDeviceLimitFunc(fn func(uuid string) (int, bool))  { f.deviceLimitFunc = fn }
+func (f *fakeKernel) UpdateGlobalDevices(users map[int][]string)           { _ = users }
+func (f *fakeKernel) ClearGlobalDevices()                                  {}
 
 func newTestService(k *fakeKernel) *Service {
 	sharedLimiter := limiter.New()
@@ -136,6 +139,34 @@ func TestApplyUserUpdatePreparesLimiterBeforeKernelUpdate(t *testing.T) {
 	}
 	if s.speedTracker.GetLimiter("uuid-new") == nil {
 		t.Fatal("expected limiter for new user after successful update")
+	}
+}
+
+func TestFailedConfigReloadPreservesRecoveredKernelAndRetriesAfter304(t *testing.T) {
+	k := &fakeKernel{running: true, reloadErr: errors.New("candidate rejected; previous configuration restored")}
+	s := newTestService(k)
+	working := &model.NodeSpec{Protocol: "vless", ServerPort: 19091}
+	desired := &model.NodeSpec{Protocol: "vless", ServerPort: 19092}
+	s.lastConfig = desired
+	s.lastUsers = []model.UserSpec{{ID: 1, UUID: "controlled"}}
+	s.appliedState.Config = working
+	s.appliedState.Users = s.lastUsers
+	s.lastConfigHash = computeConfigHash(desired) // Received does not mean applied.
+	s.applyChanges(context.Background(), true, false)
+	if k.startCalls != 0 || !k.running || s.appliedState.Config != working {
+		t.Fatal("service overwrote the kernel's successful rollback")
+	}
+	if s.lastConfigHash != computeConfigHash(working) {
+		t.Fatal("rejected configuration hash was marked accepted")
+	}
+	s.applyPullResult(context.Background(), pullResult{}) // HTTP 304: no new config body.
+	if k.reloadCalls != 2 || k.startCalls != 0 {
+		t.Fatal("pending configuration was not retried safely after an unchanged API response")
+	}
+	k.reloadErr = nil
+	s.applyPullResult(context.Background(), pullResult{})
+	if k.reloadCalls != 3 || s.appliedState.Config != desired || s.lastConfigHash != computeConfigHash(desired) {
+		t.Fatal("successfully retried configuration was not recorded as applied")
 	}
 }
 
@@ -197,7 +228,6 @@ func TestApplyUserDeltaAddPreparesLimiterBeforeKernelUpdate(t *testing.T) {
 		t.Fatal("expected limiter for delta-added user after successful update")
 	}
 }
-
 
 func TestValidateNodeRuntimeRejectsUnsupportedDNSProvider(t *testing.T) {
 	cfg := &config.Config{Kernel: config.KernelConfig{Type: "singbox"}}

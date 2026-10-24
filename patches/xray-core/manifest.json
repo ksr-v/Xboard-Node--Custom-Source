@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "module": "github.com/xtls/xray-core",
+  "replacement": "github.com/cedar2025/Xray-core",
+  "version": "v0.0.0-20260409213332-f47935539965",
+  "files": [
+    {
+      "path": "app/dispatcher/default.go",
+      "original_sha256": "c8a5baad62c1ee8760f1ef5623a2bf25e30e40877e50cf90eaf123488af18fc1",
+      "patched_sha256": "36b97ed301f6b33ca4cfe102b37151891064918573edb2807acc84ada22ec6fc"
+    },
+    {
+      "path": "app/dispatcher/ratelimit.go",
+      "original_sha256": "b418ca7aa016bd3fbad1ba8e8bdf9778a5e35f9e1558d9c89aecd4c92a333140",
+      "patched_sha256": "f8c93207f3d63f6a37134ea32e88857edf70fd8ca52daea04271f71e7719b90b"
+    },
+    {
+      "path": "common/buf/io.go",
+      "original_sha256": "fbc51503191430f02de7e02b44b5a5b2a652047bffdb3e8eefd324725222adb9",
+      "patched_sha256": "e4fd6934807f6257990fa1664785440b275280360eed30fc4cb89ce6a8299adb"
+    }
+  ]
+}

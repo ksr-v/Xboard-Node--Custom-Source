@@ -644,7 +644,9 @@ func (s *Service) pullViaAPIAsync(ctx context.Context) {
 // applyPullResult processes the result of an async pullViaAPI on the main goroutine.
 func (s *Service) applyPullResult(ctx context.Context, result pullResult) {
 	s.wsResyncPending.Store(false)
-	configChanged := false
+	// Retry an unaccepted desired configuration even when the API returns 304.
+	// A failed kernel reload must not become the accepted hash.
+	configChanged := s.lastConfig != nil && computeConfigHash(s.lastConfig) != s.lastConfigHash
 
 	if result.certChanged {
 		nlog.Core().Info("certificate renewed, kernel restart needed")
@@ -738,6 +740,7 @@ func (s *Service) startKernel(nc *model.NodeSpec, users []model.UserSpec) bool {
 
 	s.appliedState.Config = nc
 	s.appliedState.Users = users
+	s.lastConfigHash = computeConfigHash(nc)
 
 	// Initialize node logger on first successful start
 	if s.nodeLog == nil {
@@ -922,11 +925,17 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 	// decides whether to hot-swap users, reconstruct inbounds, or restart itself.
 	if configChanged && s.kernel.IsRunning() {
 		if err := s.kernel.Reload(s.lastConfig, s.lastUsers, s.cert.TLSCert()); err != nil {
-			nlog.Core().Warn(fmt.Sprintf("reload failed, restarting: %v", err))
-			s.startKernel(s.lastConfig, s.lastUsers)
+			nlog.Core().Warn(fmt.Sprintf("reload failed; previous working configuration retained when available: %v", err))
+			s.lastConfigHash = computeConfigHash(s.appliedState.Config)
+			// The kernel may have already restored its previous configuration.
+			// Do not overwrite that recovery with another failed Start attempt.
+			if !s.kernel.IsRunning() {
+				s.startKernel(s.lastConfig, s.lastUsers)
+			}
 		} else {
 			s.appliedState.Config = s.lastConfig
 			s.appliedState.Users = s.lastUsers
+			s.lastConfigHash = computeConfigHash(s.lastConfig)
 			if s.nodeLog != nil {
 				s.nodeLog.Info(fmt.Sprintf("config updated, %d users", len(s.lastUsers)))
 			}

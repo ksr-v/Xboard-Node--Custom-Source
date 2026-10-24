@@ -6,3 +6,4 @@ tools/*.py text eol=lf
 Dockerfile text eol=lf
 Makefile text eol=lf
 *.sh text eol=lf
+patches/xray-core/** text eol=lf
