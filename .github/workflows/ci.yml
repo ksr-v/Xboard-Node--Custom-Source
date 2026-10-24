@@ -38,6 +38,8 @@ jobs:
       - name: Test dependency tooling and installer fixtures
         run: |
           python3 tools/test_dependencies.py
+          python3 tools/test_kernel_patches.py
+          python3 tools/test_release_assets.py
           python3 tools/test_installer.py
           python3 tools/test_replacement.py
 
@@ -176,14 +178,21 @@ jobs:
           pattern: '*-linux-*'
           merge-multiple: true
           path: dist
-      - name: Publish new immutable Release only
+      - name: Publish new immutable Release or verify an existing publication
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo 'Release already exists; refusing to replace assets' >&2
-            exit 1
+            mkdir published
+            for asset in xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 install.sh SHA256SUMS; do
+              gh release download "$GITHUB_REF_NAME" --pattern "$asset" --dir published
+            done
+            python3 tools/verify_release_assets.py published --installer install.sh
+            echo 'Existing Release assets verified; leaving the publication unchanged.'
+            exit 0
           fi
+          cp install.sh dist/install.sh
           cd dist
-          sha256sum xboard-node-linux-* xbctl-linux-* > SHA256SUMS
+          sha256sum xboard-node-linux-* xbctl-linux-* install.sh > SHA256SUMS
+          python3 ../tools/verify_release_assets.py . --installer ../install.sh
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
-            --notes "Source: $GITHUB_SHA. Dependency snapshot is pinned in dependency-snapshot.json." \
-            xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 SHA256SUMS
+            --notes-file "../RELEASE-$GITHUB_REF_NAME.md" \
+            xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 install.sh SHA256SUMS

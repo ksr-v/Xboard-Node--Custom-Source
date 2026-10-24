@@ -14,31 +14,33 @@ Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 
 ## Install
 
+当前版本：**v1.13-orphan.5**。已有机器请按 [限速与路由更新教程](UPGRADE-v1.13-orphan.5.zh-CN.md) 同时更新面板后端和 Node；升级保留绑定与私有 CA，服务重启会中断连接。本版支持已有连接上的限速启用、调整和取消，并修复路由顺序、精确域名和安全回滚；[版本说明与验证范围](RELEASE-v1.13-orphan.5.md)。
+
 ### NodeEndpoint 独立 IP 自动对接
 
-面板安装或原生升级 [NodeEndpoint 1.0.1](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/releases/tag/v1.0.1)，完成独立 HTTPS 入口和本机公共 CA 同步后，直接在原生“机器管理”新建机器或复制安装命令，在新的 Node 服务器执行并选择 1 安装。命令使用本项目维护的固定安装源，自动带入通讯 IP/端口、机器身份、公共 CA PEM 与指纹，不再使用 cedar2025/dev 安装器，也无需逐机手工上传 CA。
+面板安装或升级 [NodeEndpoint 1.0.8](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/releases/tag/v1.0.8)，完成独立 HTTPS 入口和本机公共 CA 同步后，直接在原生“机器管理”新建机器或复制安装命令，在新的 Node 服务器执行并选择 1 安装。命令使用本项目维护的固定安装源，自动带入通讯 IP/端口、机器身份、公共 CA PEM 与指纹，也无需逐机手工上传 CA。
 
-安装器校验公共 CA 的 SHA-256、用途、自签名和强度，实际预检 HTTPS 身份/主机名；Node 与 xbctl 仍固定使用本仓库 v1.13-orphan.4 Release，并在执行前核对 AMD64/ARM64 资产摘要。仅安装脚本更新，Go 二进制未变。依赖需要 curl、wget、ca-certificates、python3、openssl，缺失时按原安装器流程安装。
+安装器校验公共 CA 的 SHA-256、用途、自签名和强度，实际预检 HTTPS 身份/主机名；Node 与 xbctl 固定使用本仓库 v1.13-orphan.5 Release，私有 CA 对接在执行前核对 AMD64/ARM64 资产摘要。本版重新构建两个程序，包含限速和路由修复。依赖需要 curl、wget、ca-certificates、python3、openssl，缺失时按原安装器流程安装。
 
 公共 CA、合并系统根的 bundle、归属摘要写入 /etc/xboard-node/node-endpoint-{ca.pem,trust.pem,trust.json}，Root 0600，服务通过 SSL_CERT_FILE 使用；升级保留，失败恢复，卸载移除活动文件并保留私有恢复备份。已运行实例不会因面板 CA 变化自动更新，CA 轮换仍需安排双信任更新。
 
 原生机器命令沿用 --token 参数，命令和 Shell 历史属于敏感内容；CA 与指纹同来自已信任的管理员面板，不构成额外带外信任。该流程用于新机器，旧安装的 REPLACE 会替换全部本机旧绑定，已有生产实例请按 NodeEndpoint 的迁移流程处理。关闭 TLS 验证不能作为 IP 对接方式。
 
-验证：30 项原生插件组件、Bash 20 项中 19 通过/1 隔离路径跳过、Linux Root CA 7 项；两 VM 的真实 IP HTTPS、NodeWorker WSS auth.success、升级保留、故障回滚和卸载通过。机器未绑定业务代理节点，本轮未复测代理/计量/UUID；既有固定 Go 的 UUID 缺陷仍保留。详见 [完整本轮报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/NATIVE_MACHINE_TEST_REPORT.md)。
+历史原生安装测试：30 项插件组件、Bash 20 项中 19 通过/1 隔离路径跳过、Linux Root CA 7 项；两 VM 的真实 IP HTTPS、NodeWorker WSS auth.success、升级保留、故障回滚和卸载通过。该轮没有业务代理节点，范围和当时问题见 [原生安装报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/NATIVE_MACHINE_TEST_REPORT.md)。本版新增代理流量、动态限速、策略和身份替换验证，按 [当前修复报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/docs/RATE_ROUTE_FIX_REPORT.md) 判断已修复与未验证范围。
 
 ### Installer (Linux systemd)
 
 在服务器的 **Bash SSH 终端**执行一条命令：
 
 ```bash
-node_script=$(curl -fsS --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Independent/main/node-installer/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script"
+node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.5/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script"
 ```
 
 - 选 **1 安装**：填写 node/machine 模式、面板地址、ID、Token 和内核；检测到旧安装时，输入 `REPLACE` 确认后替换本机**全部旧对接**，不再追加绑定。Token 输入不回显。
 - 选 **2 卸载**：输入 `UNINSTALL` 确认后断开本机全部 Node 对接并卸载，保留私有恢复备份。
 - 选 **0 退出**。面板生成的带参数对接指令也会显示此菜单，选择安装时沿用参数中的目标，不重复填写。菜单通过独立终端读取，不占用管道脚本的 stdin；自动化必须显式加 `--yes`。
 
-自动识别 amd64/arm64，默认固定下载本项目 Release **v1.13-orphan.4**，不使用 latest，也不使用仓库中旧版二进制直链。必须信任该仓库：命令完整缓冲 HTTPS 脚本后以 root 执行，入口跟随 main；需要审核／离线部署时使用下方本地文件方式。仅适用于本项目标准 Linux/systemd 安装；Docker、自定义服务或不完整安装请先人工确认。
+自动识别 amd64/arm64，默认固定下载本项目 Release **v1.13-orphan.5**。上方脚本和二进制均固定版本；后续小写 `node` 管理菜单的升级入口跟随本仓库 `dev` 分支维护的安装脚本，再使用该脚本固定的二进制版本。需要审核／离线部署时使用下方本地文件方式。仅适用于本项目标准 Linux/systemd 安装；Docker、自定义服务或不完整安装请先人工确认。
 
 安装替换、升级和重启均可能中断连接。IPv4 自动展示还需启用 FlowScope 2.4.0，和周期流量开关无关。
 
@@ -47,7 +49,7 @@ node_script=$(curl -fsS --max-time 30 --max-filesize 65536 https://raw.githubuse
 已有标准安装也可直接使用同一维护入口的 `upgrade` 动作，保留配置和绑定，不进入安装／卸载菜单：
 
 ```bash
-node_script=$(curl -fsS --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Independent/main/node-installer/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script" -- upgrade
+node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.5/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script" -- upgrade
 ```
 
 安装成功后输入小写 `node`（大小写敏感，`Node` / `NODE` 不适用）：
@@ -96,11 +98,13 @@ sudo bash install.sh --yes --mode machine --panel https://panel.example.com --to
 
 For arm64, use the matching `*-linux-arm64` binaries. Override the maintained Release base with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; explicit local binary arguments take precedence. Files in the current directory are never selected implicitly. Upgrading offline uses `sudo bash install.sh upgrade --version YOUR_IMMUTABLE_VERSION --binary ./xboard-node-linux-amd64 --xbctl-binary ./xbctl-linux-amd64`. Automated uninstall: `sudo bash install.sh uninstall --yes`.
 
-Installer verification (2026-10-09): `python tools/test_installer.py` passed 20 tests; `python tools/test_replacement.py` passed 27 with 1 skipped (48 total, 47 passed). Isolated Bash/filesystem fixtures cover replacement, stop refusal, rollback including original service state, uninstall and command ownership; a real local `xbctl` generated one new instance from an old dual-65530 fixture. Windows lacks native symlink permission: link creation was explicitly simulated and the real-symlink security case skipped. No real root/network/systemd mutation occurred. Linux service/port release and controlling-terminal pipeline acceptance remain NOT RUN. v1.13-orphan.4 includes this installer, trimpath builds and a native-symlink fixture correction; v1.13-orphan.3 is an unpublished candidate retained without moving its tag. Immutable v1.13-orphan.2 assets remain unchanged. Remote CI has a missing historical dependency-snapshot Release (see release notes).
+本版安装器回归：20 项入口测试中 19 通过，1 项因独立分发镜像工作目录不存在跳过；28 项替换／恢复测试中 26 通过，2 项分别因没有本机 xbctl 和 Windows 原生符号链接权限跳过；维护内核校验与 Release 资产校验各 5 项通过。这些隔离测试没有改动真实 systemd 服务。真实 TCP 和 Linux 并发验证见本版报告。
+
+Historical verification (2026-10-09): the original installer suite had 48 checks, with 47 passed and one Windows native-symlink case skipped. v1.13-orphan.4 included trimpath builds and the corrected native-symlink fixture. v1.13-orphan.3 remained an unpublished candidate; historical tags and assets are preserved. The missing dependency-snapshot Release reported by that version was a separate distribution issue; current CI still requires the exact asset pinned in `dependency-snapshot.json`.
 
 ### 发布与脱敏
 
-本项目公开仓库仅发布受 Git 管理的源码；实际 `config.yml`、`.env`、凭据、私钥、测试运行产物及 `.dependency-work` 不进入源码包。发布前对导出的源码树和新增提交执行敏感信息扫描，人工区分测试假值与真实凭据，并检查 Release 附件。固定依赖构建启用 Go `-trimpath`，避免二进制暴露构建机绝对源码路径。扫描是已知模式检查，不是不存在任何敏感信息的绝对保证；详见 [发布检查记录](RELEASE-v1.13-orphan.4.md)。
+本项目公开仓库仅发布受 Git 管理的源码；实际 `config.yml`、`.env`、凭据、私钥、测试运行产物及 `.dependency-work` 不进入源码包。发布前对导出的源码树和新增提交执行敏感信息扫描，人工区分测试假值与真实凭据，并检查 Release 附件。固定依赖构建启用 Go `-trimpath`，避免二进制暴露构建机绝对源码路径。扫描是已知模式检查，不是不存在任何敏感信息的绝对保证；详见 [本版发布说明](RELEASE-v1.13-orphan.5.md)。
 
 ## xbctl
 

@@ -31,12 +31,12 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.4}"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.5}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
-DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Independent/main/node-installer}"
-INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Independent/nodeendpoint-native-v1.0.0/node-installer"
+DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/dev}"
+INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.5"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -247,7 +247,7 @@ usage() {
     --kernel, -k        singbox or xray (default: singbox)
     --endpoint-ca-base64       Panel-generated public CA bundle (no private key)
     --endpoint-ca-fingerprint  Independently delivered SHA-256 root pins
-    --version           Fixed release version (default: v1.13-orphan.4)
+    --version           Fixed release version (default: v1.13-orphan.5)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
@@ -820,7 +820,7 @@ stage_endpoint_trust() {
         ENDPOINT_TRUST=1
     fi
     if [ "$ENDPOINT_TRUST" -eq 1 ]; then
-        [ "$RELEASE_VERSION" = v1.13-orphan.4 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.4'; return 1; }
+        [ "$RELEASE_VERSION" = v1.13-orphan.5 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.5'; return 1; }
     fi
 }
 
@@ -828,10 +828,10 @@ verify_endpoint_binary() {
     [ "$ENDPOINT_TRUST" -eq 1 ] || return 0
     local expected
     case "$1:$ARCH" in
-        node:amd64) expected=2b37ea5fdfeb721d08b53330134b7a2e072447c10913620da13ceba600d7b772 ;;
-        node:arm64) expected=004b5801338cfb0fd1f56f6b4c39f4ff57468cd012cdab1454abdc7bb31e1327 ;;
-        xbctl:amd64) expected=2ea33645f2f43bf23cdd966989ba01840bdc79a6ad562d522457799bebbd3fb9 ;;
-        xbctl:arm64) expected=16c652558433016adececea6f4fb3d3bfe0692943307cada51742ac3708274fa ;;
+        node:amd64) expected=0f3aeda43036081c668826a87cf4c35d227ac8a0a4488ccebab2a4c74db1b78f ;;
+        node:arm64) expected=02dad963d2b9732093c43397b6d210bfaa52391821747e9e47dbb6cfd1b61b86 ;;
+        xbctl:amd64) expected=c831cc732377906de5d516aad065e9b50b572e1576b8b4e3d1f2450a7a9adb9b ;;
+        xbctl:arm64) expected=a6541cafd327afac8cc3f01717b4979acd9e17da5c49395c3a3d95e921f11ca5 ;;
         *) log_error 'Unsupported pinned Node asset'; return 1 ;;
     esac
     printf '%s  %s\n' "$expected" "$2" | sha256sum -c - >/dev/null
