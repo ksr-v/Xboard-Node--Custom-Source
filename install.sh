@@ -247,7 +247,7 @@ usage() {
     --kernel, -k        singbox or xray (default: singbox)
     --endpoint-ca-base64       Panel-generated public CA bundle (no private key)
     --endpoint-ca-fingerprint  Independently delivered SHA-256 root pins
-    --version           Fixed release version (default: v1.13-orphan.5)
+    --version           Fixed release version (this installer verifies v1.13-orphan.5 only)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
@@ -825,7 +825,12 @@ stage_endpoint_trust() {
 }
 
 verify_endpoint_binary() {
-    [ "$ENDPOINT_TRUST" -eq 1 ] || return 0
+    # Pin executable bytes for both domain and private-CA installations. Changing
+    # the CA mode must never disable the release's binary integrity check.
+    [ "$RELEASE_VERSION" = v1.13-orphan.5 ] || {
+        log_error 'This installer can only verify v1.13-orphan.5 assets; use the matching audited installer for another release'
+        return 1
+    }
     local expected
     case "$1:$ARCH" in
         node:amd64) expected=0f3aeda43036081c668826a87cf4c35d227ac8a0a4488ccebab2a4c74db1b78f ;;
@@ -834,7 +839,10 @@ verify_endpoint_binary() {
         xbctl:arm64) expected=a6541cafd327afac8cc3f01717b4979acd9e17da5c49395c3a3d95e921f11ca5 ;;
         *) log_error 'Unsupported pinned Node asset'; return 1 ;;
     esac
-    printf '%s  %s\n' "$expected" "$2" | sha256sum -c - >/dev/null
+    if ! printf '%s  %s\n' "$expected" "$2" | sha256sum -c - >/dev/null; then
+        log_error 'Pinned binary SHA-256 mismatch; executable was not run'
+        return 1
+    fi
 }
 
 preflight_endpoint() {
@@ -874,7 +882,7 @@ stage_binary() {
         fi
     fi
     chmod +x "$staged"
-    verify_endpoint_binary node "$staged"
+    verify_endpoint_binary node "$staged" || return 1
     if ! "$staged" -v >/dev/null 2>&1; then
         log_error "Downloaded binary failed version check"
         exit 1
@@ -903,7 +911,7 @@ stage_xbctl() {
         fi
     fi
     chmod +x "$staged"
-    verify_endpoint_binary xbctl "$staged"
+    verify_endpoint_binary xbctl "$staged" || return 1
     if ! "$staged" version > /dev/null 2>&1; then
         log_error "Downloaded xbctl failed version check"
         exit 1

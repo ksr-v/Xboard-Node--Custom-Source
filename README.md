@@ -20,7 +20,7 @@ Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 
 面板安装或升级 [NodeEndpoint 1.0.8](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/releases/tag/v1.0.8)，完成独立 HTTPS 入口和本机公共 CA 同步后，直接在原生“机器管理”新建机器或复制安装命令，在新的 Node 服务器执行并选择 1 安装。命令使用本项目维护的固定安装源，自动带入通讯 IP/端口、机器身份、公共 CA PEM 与指纹，也无需逐机手工上传 CA。
 
-安装器校验公共 CA 的 SHA-256、用途、自签名和强度，实际预检 HTTPS 身份/主机名；Node 与 xbctl 固定使用本仓库 v1.13-orphan.5 Release，私有 CA 对接在执行前核对 AMD64/ARM64 资产摘要。本版重新构建两个程序，包含限速和路由修复。依赖需要 curl、wget、ca-certificates、python3、openssl，缺失时按原安装器流程安装。
+安装器校验公共 CA 的 SHA-256、用途、自签名和强度，实际预检 HTTPS 身份/主机名；Node 与 xbctl 固定使用本仓库 v1.13-orphan.5 Release，域名和私有 CA 两种模式都在执行前核对 AMD64/ARM64 资产摘要。本版安装器只接受 v1.13-orphan.5，指定历史版本或 latest 会在执行二进制前拒绝；下载镜像和本地文件也必须匹配固定摘要。本版重新构建两个程序，包含限速和路由修复。依赖需要 curl、wget、ca-certificates、python3、openssl，缺失时按原安装器流程安装。
 
 公共 CA、合并系统根的 bundle、归属摘要写入 /etc/xboard-node/node-endpoint-{ca.pem,trust.pem,trust.json}，Root 0600，服务通过 SSL_CERT_FILE 使用；升级保留，失败恢复，卸载移除活动文件并保留私有恢复备份。已运行实例不会因面板 CA 变化自动更新，CA 轮换仍需安排双信任更新。
 
@@ -87,18 +87,18 @@ Use the maintained installer and version-pinned local binaries. Replace the plac
 ```bash
 # Node mode
 sudo bash install.sh --yes --mode node --panel https://panel.example.com --token YOUR_TOKEN \
-  --node-id YOUR_NODE_ID --version YOUR_IMMUTABLE_VERSION --binary ./xboard-node-linux-amd64 \
+  --node-id YOUR_NODE_ID --version v1.13-orphan.5 --binary ./xboard-node-linux-amd64 \
   --xbctl-binary ./xbctl-linux-amd64
 
 # Machine mode
 sudo bash install.sh --yes --mode machine --panel https://panel.example.com --token YOUR_TOKEN \
-  --machine-id YOUR_MACHINE_ID --version YOUR_IMMUTABLE_VERSION --binary ./xboard-node-linux-amd64 \
+  --machine-id YOUR_MACHINE_ID --version v1.13-orphan.5 --binary ./xboard-node-linux-amd64 \
   --xbctl-binary ./xbctl-linux-amd64
 ```
 
-For arm64, use the matching `*-linux-arm64` binaries. Override the maintained Release base with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; explicit local binary arguments take precedence. Files in the current directory are never selected implicitly. Upgrading offline uses `sudo bash install.sh upgrade --version YOUR_IMMUTABLE_VERSION --binary ./xboard-node-linux-amd64 --xbctl-binary ./xbctl-linux-amd64`. Automated uninstall: `sudo bash install.sh uninstall --yes`.
+For arm64, use the matching `*-linux-arm64` binaries. Override the maintained Release base with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; explicit local binary arguments take precedence. Both must match this installer's pinned v1.13-orphan.5 hashes; other release versions are refused. Files in the current directory are never selected implicitly. Upgrading offline uses `sudo bash install.sh upgrade --version v1.13-orphan.5 --binary ./xboard-node-linux-amd64 --xbctl-binary ./xbctl-linux-amd64`. Automated uninstall: `sudo bash install.sh uninstall --yes`.
 
-本版安装器回归：20 项入口测试中 19 通过，1 项因独立分发镜像工作目录不存在跳过；28 项替换／恢复测试中 26 通过，2 项分别因没有本机 xbctl 和 Windows 原生符号链接权限跳过；维护内核校验与 Release 资产校验各 5 项通过。这些隔离测试没有改动真实 systemd 服务。真实 TCP 和 Linux 并发验证见本版报告。
+本版安装器回归：22 项入口测试中 21 通过，1 项因独立分发镜像工作目录不存在跳过；新增真实 Bash / sha256sum 检查涵盖域名和私有 CA、两架构和两个程序的篡改拒绝，并确认在 Bash 条件调用中也不会执行失败的二进制。28 项替换／恢复测试中 26 通过，2 项分别因没有本机 xbctl 和 Windows 原生符号链接权限跳过；维护内核校验与 Release 资产校验各 5 项通过。这些隔离测试没有改动真实 systemd 服务。真实 TCP 和 Linux 并发验证见本版报告。
 
 Historical verification (2026-10-09): the original installer suite had 48 checks, with 47 passed and one Windows native-symlink case skipped. v1.13-orphan.4 included trimpath builds and the corrected native-symlink fixture. v1.13-orphan.3 remained an unpublished candidate; historical tags and assets are preserved. The missing dependency-snapshot Release reported by that version was a separate distribution issue; current CI still requires the exact asset pinned in `dependency-snapshot.json`.
 

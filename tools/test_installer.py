@@ -124,6 +124,51 @@ printf 'RESULT:%s:%s\n' "$ACTION" "$remaining"
                          'resolve_download_url xbctl-linux-amd64; echo "$DOWNLOAD_URL"')
         self.assertIn("https://assets.example.com/releases/download/custom/xbctl-linux-amd64", output)
 
+    def test_domain_and_private_ca_reject_tampered_binaries_before_execution(self):
+        # Exercise the real staging and sha256sum functions. Calling staging in
+        # an if also disables Bash's implicit errexit: the explicit integrity
+        # failure must still prevent execution of the downloaded program.
+        with tempfile.TemporaryDirectory(prefix="node-binary-integrity-") as directory:
+            root = Path(directory)
+            program = root / "tampered-program"
+            program.write_text('#!/usr/bin/env bash\nprintf executed > "$TASK_EXECUTION_MARKER"\n',
+                               encoding="utf-8", newline="\n")
+            for trust in (0, 1):
+                for arch in ("amd64", "arm64"):
+                    for kind in ("node", "xbctl"):
+                        with self.subTest(ca_mode=trust, architecture=arch, program=kind):
+                            stage = root / f"stage-{trust}-{arch}-{kind}"
+                            stage.mkdir()
+                            marker = stage / "executed"
+                            result = self.shell(f'''
+ARCH={arch}; ENDPOINT_TRUST={trust}; RELEASE_VERSION=v1.13-orphan.5
+TMP_DIR="$TASK_INTEGRITY_STAGE"
+BINARY_SOURCE="$TASK_TAMPERED_PROGRAM"; CLI_BINARY_SOURCE="$TASK_TAMPERED_PROGRAM"
+if stage_{"binary" if kind == "node" else "xbctl"}; then echo UNSAFE_ACCEPTED; exit 91; fi
+[[ ! -e "$TASK_EXECUTION_MARKER" ]]
+echo INTEGRITY_REFUSED
+''', env={"TASK_INTEGRITY_STAGE": stage.as_posix(),
+          "TASK_TAMPERED_PROGRAM": program.as_posix(), "TASK_EXECUTION_MARKER": marker.as_posix()})
+                            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                            self.assertIn("INTEGRITY_REFUSED", result.stdout)
+                            self.assertIn("SHA-256 mismatch", result.stdout)
+                            self.assertNotIn("UNSAFE_ACCEPTED", result.stdout)
+                            self.assertFalse(marker.exists())
+
+    def test_unverifiable_release_is_refused_in_both_ca_modes(self):
+        for trust in (0, 1):
+            for version in ("v1.13-orphan.4", "latest", "custom"):
+                with self.subTest(ca_mode=trust, release=version):
+                    result = self.shell(f'''
+ARCH=amd64; ENDPOINT_TRUST={trust}; RELEASE_VERSION={version}
+if verify_endpoint_binary node /nonexistent-fixture-binary; then echo UNSAFE_ACCEPTED; exit 91; fi
+echo RELEASE_REFUSED
+''')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("can only verify v1.13-orphan.5 assets", result.stdout)
+                    self.assertIn("RELEASE_REFUSED", result.stdout)
+                    self.assertNotIn("UNSAFE_ACCEPTED", result.stdout)
+
     def upgrade(self, port, args="", failure=False):
         with tempfile.TemporaryDirectory(prefix="node-installer-test-") as directory:
             config = Path(directory) / "fixture.yml"
