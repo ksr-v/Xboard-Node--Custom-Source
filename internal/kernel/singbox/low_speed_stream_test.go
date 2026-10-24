@@ -19,15 +19,31 @@ func TestSingleUserOneMbpsDownloadIsGatedBeforeForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer target.Close()
+	const payloadSize = 1024 * 1024
+	serverDone := make(chan error, 1)
 	go func() {
-		c, e := target.Accept()
-		if e != nil {
-			return
-		}
-		defer c.Close()
-		var command [1]byte
-		io.ReadFull(c, command[:])
-		_, _ = c.Write(make([]byte, 1024*1024))
+		serverDone <- func() error {
+			c, err := target.Accept()
+			if err != nil {
+				return err
+			}
+			defer c.Close()
+			if err := c.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+				return err
+			}
+			var command [1]byte
+			if _, err := io.ReadFull(c, command[:]); err != nil {
+				return err
+			}
+			n, err := c.Write(make([]byte, payloadSize))
+			if err != nil {
+				return err
+			}
+			if n != payloadSize {
+				return io.ErrShortWrite
+			}
+			return c.Close()
+		}()
 	}()
 	users := []model.UserSpec{{ID: 1, UUID: "aaaaaaaa-1111-2222-3333-444444444444", SpeedLimit: 1}}
 	l := limiter.New()
@@ -43,17 +59,36 @@ func TestSingleUserOneMbpsDownloadIsGatedBeforeForward(t *testing.T) {
 	defer s.Stop()
 	c := policyDial(t, nc.ServerPort, users[0].UUID, target.Addr().String())
 	defer c.Close()
-	c.SetDeadline(time.Now().Add(15 * time.Second))
+	if err := c.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	started := time.Now()
-	c.Write([]byte{1})
-	if _, err := io.ReadFull(c, make([]byte, 1024*1024)); err != nil {
+	if n, err := c.Write([]byte{1}); err != nil || n != 1 {
+		t.Fatalf("write download command: n=%d err=%v", n, err)
+	}
+	if _, err := io.ReadFull(c, make([]byte, payloadSize)); err != nil {
 		t.Fatal(err)
 	}
 	if elapsed := time.Since(started); elapsed < 6*time.Second {
 		t.Fatalf("single-user 1Mbps download bypassed the gate: %v", elapsed)
 	}
+	// Receiving the last byte can precede the proxy writer's return and its
+	// counter update. The target writer must finish successfully, then the
+	// proxy must propagate EOF after completing that final tracked write.
+	select {
+	case err := <-serverDone:
+		if err != nil {
+			t.Fatalf("target writer: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("target writer did not finish")
+	}
+	var tail [1]byte
+	if n, err := c.Read(tail[:]); n != 0 || err != io.EOF {
+		t.Fatalf("download did not end at EOF: n=%d err=%v", n, err)
+	}
 	traffic, _, _, err := s.GetUserTraffic(context.Background())
-	if err != nil || traffic[1][1] < 1024*1024 {
+	if err != nil || traffic[1][1] < payloadSize {
 		t.Fatalf("traffic accounting missing: %v %v", traffic, err)
 	}
 }
