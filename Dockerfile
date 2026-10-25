@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" VERSION="$VERSION" COMMI
 # Runtime stage — sing-box & xray-core are embedded as Go libraries
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata nftables
 
 COPY --from=builder /build/xboard-node /usr/local/bin/xboard-node
 COPY --from=builder /build/xbctl /usr/local/bin/xbctl

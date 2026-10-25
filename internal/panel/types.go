@@ -71,8 +71,8 @@ type MachineNode struct {
 
 // MachineNodesResponse is the response from GET /api/v2/server/machine/nodes.
 type MachineNodesResponse struct {
-	Nodes      []MachineNode      `json:"nodes"`
-	BaseConfig MachineBaseConfig  `json:"base_config"`
+	Nodes      []MachineNode     `json:"nodes"`
+	BaseConfig MachineBaseConfig `json:"base_config"`
 }
 
 // MachineBaseConfig holds polling intervals for machine mode.
@@ -88,6 +88,7 @@ type NodeConfig struct {
 	Protocol        string                 `json:"protocol"`
 	ListenIP        string                 `json:"listen_ip"`
 	ServerPort      int                    `json:"server_port"`
+	PortHopping     *PortHopping           `json:"port_hopping,omitempty"`
 	Network         string                 `json:"network"`
 	NetworkSettings map[string]interface{} `json:"networkSettings"`
 	BaseConfig      BaseConfig             `json:"base_config"`
@@ -159,6 +160,13 @@ func (nc *NodeConfig) GetProxyProtocol() bool {
 		}
 	}
 	return false
+}
+
+// PortHopping requests an automatically managed UDP redirect range for HY2.
+// Missing/null preserves compatibility with panels without this extension.
+type PortHopping struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 type MultiplexConfig struct {

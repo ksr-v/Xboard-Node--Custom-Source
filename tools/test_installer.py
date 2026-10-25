@@ -177,6 +177,7 @@ echo RELEASE_REFUSED
 CONFIG_FILE="$TASK_FIXTURE_CONFIG"; CLI_PATH=/nonexistent-fixture-cli
 detect_current_state() { CURRENT_STATE=installed; }
 ensure_dirs() { :; }; stage_binary() { :; }; stage_xbctl() { :; }
+ensure_nft_cli() { :; }
 stage_installer() { :; }; install_management_files() { :; }; stop_existing_service() { :; }
 render_service() { :; }; backup_existing_state() { BACKUP_PATH=/nonexistent-fixture-backup; }
 mktemp() { printf /nonexistent-fixture-stage; }
@@ -251,6 +252,69 @@ stage_xbctl
                             'stage_binary() { echo UNEXPECTED_DOWNLOAD; }; perform_upgrade')
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("UNEXPECTED_DOWNLOAD", result.stdout)
+
+    def test_nftables_is_installed_for_supported_package_managers(self):
+        with tempfile.TemporaryDirectory(prefix="node-dependency-fixture-") as directory:
+            path = Path(directory) / "calls.txt"
+            for os_name, manager in (("debian", "apt-get"), ("ubuntu", "apt-get"),
+                                     ("rhel", "dnf"), ("rocky", "dnf"), ("almalinux", "dnf"),
+                                     ("fedora", "dnf"), ("centos", "yum"), ("alpine", "apk")):
+                with self.subTest(os=os_name):
+                    output = self.ok('''
+command() {
+    if [[ "$1" == -v && "$2" == dnf ]]; then [[ "$TASK_MANAGER" == dnf ]]; return; fi
+    builtin command "$@"
+}
+run_with_retry() { printf '%s\n' "$*" >> "$TASK_DEPENDENCY_RECORD"; }
+OS="$TASK_OS"; install_dependencies
+cat "$TASK_DEPENDENCY_RECORD"
+''', env={"TASK_MANAGER": manager, "TASK_OS": os_name,
+          "TASK_DEPENDENCY_RECORD": path.as_posix()})
+                    self.assertRegex(output, rf"{manager} (?:install|add) [^\n]*\bnftables\b")
+                    self.assertNotIn("systemctl", output)
+                    self.assertNotIn("nft -f", output)
+                    path.unlink()
+
+    def test_nft_cli_preflight_checks_executable_without_ruleset_access(self):
+        output = self.ok('''
+nft() { [[ "$*" == --version ]] || return 91; printf 'VERSION_ONLY\n'; }
+ensure_nft_cli
+echo NFT_READY
+''')
+        self.assertIn("NFT_READY", output)
+        result = self.shell('nft() { return 126; }; ensure_nft_cli')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("repair the nftables package/PATH", result.stdout)
+
+    def test_missing_nft_refuses_install_and_upgrade_before_replacement(self):
+        for action in ("perform_install", "perform_upgrade"):
+            with self.subTest(action=action):
+                output = self.ok('''
+command() {
+    if [[ "$1" == -v && "$2" == nft ]]; then return 1; fi
+    builtin command "$@"
+}
+validate_install_request() { :; }; detect_current_state() { CURRENT_STATE=installed; }
+require_reconfigure_confirmation() { :; }; install_dependencies() { :; }
+HEALTH_PORT_SET=1; HEALTH_PORT=0
+ensure_dirs() { echo UNEXPECTED_MUTATION; return 91; }
+backup_existing_state() { echo UNEXPECTED_MUTATION; return 91; }
+stop_existing_service() { echo UNEXPECTED_MUTATION; return 91; }
+stage_binary() { echo UNEXPECTED_MUTATION; return 91; }
+if ''' + action + '''; then echo UNSAFE_ACCEPTED; exit 91; fi
+echo NFT_REFUSED
+''')
+                self.assertIn("NFT_REFUSED", output)
+                self.assertIn("install nftables with apt-get, dnf/yum or apk", output)
+                self.assertNotIn("UNEXPECTED_MUTATION", output)
+                self.assertNotIn("UNSAFE_ACCEPTED", output)
+
+    def test_hopping_installer_does_not_weaken_service_or_flush_firewall(self):
+        self.assertIn("NoNewPrivileges=true", SCRIPT)
+        self.assertNotIn("NoNewPrivileges=false", SCRIPT)
+        self.assertNotIn("CapabilityBoundingSet=", SCRIPT)
+        self.assertNotIn("nft flush", SCRIPT)
+        self.assertNotRegex(SCRIPT, r"systemctl\s+(?:enable|start|restart)\s+nftables")
 
     def test_buffered_readme_command(self):
         for behavior, executed in (("printf 'fixture script'", True), ("printf 'partial'; return 22", False),

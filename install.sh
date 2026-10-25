@@ -598,19 +598,38 @@ install_dependencies() {
     case "$OS" in
         ubuntu|debian)
             DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get update -qq
-            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates python3 openssl >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
             ;;
         centos|rhel|rocky|almalinux|fedora)
             if command -v dnf >/dev/null 2>&1; then
-                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates python3 openssl >/dev/null 2>&1
+                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
             else
-                run_with_retry 5 3 yum install -y -q curl wget ca-certificates python3 openssl >/dev/null 2>&1
+                run_with_retry 5 3 yum install -y -q curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
             fi
+            ;;
+        alpine)
+            run_with_retry 5 3 apk add --no-cache curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
             ;;
         *)
             log_warn "OS ${OS} is not in the official support set; continuing best-effort"
             ;;
     esac
+}
+
+ensure_nft_cli() {
+    if ! command -v nft >/dev/null 2>&1; then
+        log_error 'nft is required before replacing Node; install nftables with apt-get, dnf/yum or apk, then retry. Existing Node files/service have not been replaced.'
+        return 1
+    fi
+    if ! nft --version >/dev/null 2>&1; then
+        log_error 'nft exists but cannot run; repair the nftables package/PATH before retrying. Existing Node files/service have not been replaced.'
+        return 1
+    fi
+}
+
+show_port_hopping_note() {
+    log_info 'Hysteria2: Node automatically manages UDP forwarding when the panel supplies a port-hopping range.'
+    log_info 'Permit the advertised UDP range at the cloud/network edge and the primary UDP listener in host INPUT; redirect changes the destination port. Existing firewall acceptance policies are unchanged.'
 }
 
 ensure_dirs() {
@@ -1124,6 +1143,7 @@ perform_install() {
         log_info 'Existing Node detected; migrating to the current single-target configuration'
     fi
     install_dependencies
+    ensure_nft_cli || return 1
     TMP_DIR=$(mktemp -d)
     ensure_dirs
     stage_endpoint_trust
@@ -1138,6 +1158,7 @@ perform_install() {
     start_service
 
     log_info "Installation succeeded"
+    show_port_hopping_note
     log_info "Service: ${SERVICE_NAME}"
     log_info "Config: ${CONFIG_FILE}"
     log_info "Credentials: ${CREDENTIALS_FILE}"
@@ -1169,6 +1190,7 @@ perform_upgrade() {
     HEALTH_ENABLED=1
     if [ "$HEALTH_PORT" -eq 0 ]; then HEALTH_ENABLED=0; fi
     install_dependencies
+    ensure_nft_cli || return 1
     TMP_DIR=$(mktemp -d)
     ensure_dirs
     stage_endpoint_trust
@@ -1192,6 +1214,7 @@ perform_upgrade() {
         return 1
     fi
     log_info "Upgrade succeeded"
+    show_port_hopping_note
 }
 
 confirm_uninstall() {

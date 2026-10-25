@@ -25,6 +25,7 @@ import (
 	"github.com/cedar2025/xboard-node/internal/model"
 	"github.com/cedar2025/xboard-node/internal/monitor"
 	"github.com/cedar2025/xboard-node/internal/nlog"
+	"github.com/cedar2025/xboard-node/internal/portforward"
 	"github.com/cedar2025/xboard-node/internal/tracker"
 )
 
@@ -37,6 +38,7 @@ type Service struct {
 	limiter      *limiter.Limiter
 	speedTracker *limiter.SpeedTracker
 	cert         *cert.Manager
+	portForward  portForwarder
 
 	lastConfig *model.NodeSpec
 	lastUsers  []model.UserSpec
@@ -76,6 +78,11 @@ type Service struct {
 
 	// metricsMu: lastUsers, lastConfig, wsClient, wsDisconnectAt (buildMetrics vs main loop).
 	metricsMu sync.RWMutex
+}
+
+type portForwarder interface {
+	Update(*model.NodeSpec) error
+	Close() error
 }
 
 // pullResult carries the outcome of an async pullViaAPI back to the main goroutine.
@@ -162,6 +169,7 @@ func newService(cfg *config.Config, cp controlplane.ControlPlane) *Service {
 		limiter:      l,
 		speedTracker: st,
 		cert:         certMgr,
+		portForward:  portforward.New(fmt.Sprintf("%s|node:%d|%s", cfg.InstanceID, cfg.Panel.NodeID, cfg.Kernel.ConfigDir)),
 		wsEvents:     make(chan controlplane.Event, 16),
 		wsStatusCh:   make(chan controlplane.StatusChange, 4),
 		pullResults:  make(chan pullResult, 1),
@@ -169,6 +177,9 @@ func newService(cfg *config.Config, cp controlplane.ControlPlane) *Service {
 }
 
 func (s *Service) Run(ctx context.Context) error {
+	// Also runs after failed startup. Only this service's managed UDP rules
+	// are removed; other node services and host firewall policies are untouched.
+	defer s.closePortForward()
 	// Start cert manager (handles auto-TLS or manual cert verification)
 	if err := s.cert.Start(ctx); err != nil {
 		return fmt.Errorf("cert manager: %w", err)
@@ -221,6 +232,7 @@ func (s *Service) Run(ctx context.Context) error {
 			// When WebSocket is connected, skip REST polling entirely.
 			// Config/user updates arrive via WS push.
 			if s.wsClient != nil && s.wsClient.IsConnected() {
+				s.retryPendingConfig(ctx)
 				continue
 			}
 			nlog.Core().Debug("polling from API (ws not connected)")
@@ -241,6 +253,15 @@ func (s *Service) Run(ctx context.Context) error {
 		case event := <-s.wsEvents:
 			s.handleWSEvent(ctx, event)
 		}
+	}
+}
+
+// A push receipt is not an acknowledgement that privileged forwarding or the
+// kernel update succeeded. Retry the latest rejected snapshot on the normal
+// pull tick even while WS stays connected; do not require another panel save.
+func (s *Service) retryPendingConfig(ctx context.Context) {
+	if s.lastConfig != nil && computeConfigHash(s.lastConfig) != s.lastConfigHash {
+		s.applyChanges(ctx, true, false)
 	}
 }
 
@@ -305,6 +326,9 @@ func (s *Service) initialSetup(ctx context.Context) error {
 	)
 
 	if len(bootstrap.Users) == 0 {
+		if err := s.updatePortForward(nil); err != nil {
+			return fmt.Errorf("cleanup inactive UDP forwarding: %w", err)
+		}
 		nlog.Core().Warn("no users, kernel will not start until users are available")
 		s.markMailboxReadyAndDrain(ctx)
 		return nil
@@ -733,8 +757,15 @@ func (s *Service) restoreUserState(users []model.UserSpec, hash string) {
 // startKernel starts (or restarts) the kernel with the given config/users and
 // records the successfully applied state. Returns false on error.
 func (s *Service) startKernel(nc *model.NodeSpec, users []model.UserSpec) bool {
+	if err := s.updatePortForward(nc); err != nil {
+		nlog.Core().Error("automatic Hysteria2 UDP forwarding failed; check nftables, CAP_NET_ADMIN and rule conflicts", "error", err)
+		s.lastConfigHash = computeConfigHash(s.appliedState.Config)
+		return false
+	}
 	if err := s.kernel.Start(nc, users, s.cert.TLSCert()); err != nil {
 		nlog.Core().Error("failed to start kernel", "error", err)
+		s.restorePortForward()
+		s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 		return false
 	}
 
@@ -771,7 +802,16 @@ func (s *Service) ensureRunning() bool {
 // applyUserUpdate replaces the full user set and hot-swaps the kernel.
 // Called from WS sync.users and REST polling.
 func (s *Service) applyUserUpdate(ctx context.Context, users []model.UserSpec, newHash string) {
-	if !s.ensureRunning() {
+	// A machine can receive its config before its first eligible user. Prepare
+	// that first user set before startup so delayed activation also installs NAT.
+	if !s.kernel.IsRunning() {
+		prevUsers, prevHash := s.prepareUserState(users)
+		if len(users) == 0 {
+			return
+		}
+		if !s.ensureRunning() {
+			s.restoreUserState(prevUsers, prevHash)
+		}
 		return
 	}
 
@@ -803,7 +843,11 @@ func (s *Service) applyUserDelta(ctx context.Context, action string, deltaUsers 
 		}
 		merged := mergeUsers(s.lastUsers, deltaUsers)
 
-		if !s.ensureRunning() {
+		if !s.kernel.IsRunning() {
+			prevUsers, prevHash := s.prepareUserState(merged)
+			if !s.ensureRunning() {
+				s.restoreUserState(prevUsers, prevHash)
+			}
 			return
 		}
 
@@ -917,6 +961,9 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 		if len(s.lastUsers) == 0 {
 			s.kernel.Stop()
 			s.appliedState.Users = nil
+			if err := s.updatePortForward(nil); err != nil {
+				nlog.Core().Error("failed to remove inactive Hysteria2 UDP forwarding", "error", err)
+			}
 		}
 		return
 	}
@@ -924,7 +971,13 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 	// If config changed, delegate to kernel.Reload. The kernel implementation
 	// decides whether to hot-swap users, reconstruct inbounds, or restart itself.
 	if configChanged && s.kernel.IsRunning() {
+		if err := s.updatePortForward(s.lastConfig); err != nil {
+			nlog.Core().Error("automatic Hysteria2 UDP forwarding update rejected; retaining current kernel", "error", err)
+			s.lastConfigHash = computeConfigHash(s.appliedState.Config)
+			return
+		}
 		if err := s.kernel.Reload(s.lastConfig, s.lastUsers, s.cert.TLSCert()); err != nil {
+			s.restorePortForward()
 			nlog.Core().Warn(fmt.Sprintf("reload failed; previous working configuration retained when available: %v", err))
 			s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 			// The kernel may have already restored its previous configuration.
@@ -942,6 +995,27 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 		}
 	} else if !s.kernel.IsRunning() {
 		s.startKernel(s.lastConfig, s.lastUsers)
+	}
+}
+
+func (s *Service) updatePortForward(nc *model.NodeSpec) error {
+	if s.portForward == nil {
+		return nil // Test services may inject only a kernel.
+	}
+	return s.portForward.Update(nc)
+}
+
+func (s *Service) restorePortForward() {
+	if err := s.updatePortForward(s.appliedState.Config); err != nil {
+		nlog.Core().Error("failed to restore previous Hysteria2 UDP forwarding; configuration remains unaccepted", "error", err)
+	}
+}
+
+func (s *Service) closePortForward() {
+	if s.portForward != nil {
+		if err := s.portForward.Close(); err != nil {
+			nlog.Core().Error("failed to clean up owned Hysteria2 UDP forwarding", "error", err)
+		}
 	}
 }
 

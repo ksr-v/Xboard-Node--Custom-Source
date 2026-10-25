@@ -145,6 +145,7 @@ func cloneNodeSpec(spec *model.NodeSpec) *model.NodeSpec {
 		return nil
 	}
 	clone := *spec
+	clone.PortHopping = spec.PortHopping.Clone()
 	if spec.NetworkSettings != nil {
 		clone.NetworkSettings = make(map[string]interface{}, len(spec.NetworkSettings))
 		for k, v := range spec.NetworkSettings {

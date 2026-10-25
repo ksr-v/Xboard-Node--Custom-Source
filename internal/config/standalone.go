@@ -16,8 +16,9 @@ type StandaloneNodeConfig struct {
 	Protocol string `yaml:"protocol"`
 	ListenIP string `yaml:"listen_ip,omitempty"`
 
-	ServerPort int    `yaml:"server_port"`
-	Network    string `yaml:"network,omitempty"`
+	ServerPort  int          `yaml:"server_port"`
+	PortHopping *PortHopping `yaml:"port_hopping,omitempty"`
+	Network     string       `yaml:"network,omitempty"`
 
 	NetworkSettings  map[string]any              `yaml:"network_settings,omitempty"`
 	Routes           []StandaloneRouteRule       `yaml:"routes,omitempty"`
@@ -49,6 +50,11 @@ type StandaloneNodeConfig struct {
 
 	Multiplex           *StandaloneMultiplexConfig `yaml:"multiplex,omitempty"`
 	AcceptProxyProtocol bool                       `yaml:"accept_proxy_protocol,omitempty"`
+}
+
+type PortHopping struct {
+	Start int `yaml:"start"`
+	End   int `yaml:"end"`
 }
 
 type StandaloneRouteRule struct {

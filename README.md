@@ -12,6 +12,8 @@ Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 - Deploy modes: node mode, machine mode, standalone mode
 - Multi-instance: single process binding multiple panels / nodes
 
+开发分支新增 [Hysteria2 自动端口转发](HY2_PORT_HOPPING.md)：按新版面板下发的范围管理节点 UDP 映射，支持范围变更、撤销及退出清理。需同时使用包含该功能的后端与 Node；下方现有 v1.13-orphan.5 发行命令尚不包含此功能。
+
 ## Install
 
 当前版本：**v1.13-orphan.5**。已有机器请按 [限速与路由更新教程](UPGRADE-v1.13-orphan.5.zh-CN.md) 同时更新面板后端和 Node；升级保留绑定与私有 CA，服务重启会中断连接。本版支持已有连接上的限速启用、调整和取消，并修复路由顺序、精确域名和安全回滚；[版本说明与验证范围](RELEASE-v1.13-orphan.5.md)。

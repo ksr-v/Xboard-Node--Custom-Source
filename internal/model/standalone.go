@@ -59,6 +59,7 @@ func NodeSpecFromStandalone(cfg *config.Config) *NodeSpec {
 		Protocol:            sc.Node.Protocol,
 		ListenIP:            sc.Node.ListenIP,
 		ServerPort:          sc.Node.ServerPort,
+		PortHopping:         portHoppingFromStandalone(sc.Node.PortHopping),
 		Network:             sc.Node.Network,
 		NetworkSettings:     cloneAnyMap(sc.Node.NetworkSettings),
 		Routes:              routes,
@@ -87,6 +88,13 @@ func NodeSpecFromStandalone(cfg *config.Config) *NodeSpec {
 		Multiplex:           multiplex,
 		AcceptProxyProtocol: sc.Node.AcceptProxyProtocol,
 	}
+}
+
+func portHoppingFromStandalone(p *config.PortHopping) *PortHopping {
+	if p == nil {
+		return nil
+	}
+	return &PortHopping{Start: p.Start, End: p.End}
 }
 
 func NodeSpecFromStandaloneValidated(cfg *config.Config) (*NodeSpec, error) {

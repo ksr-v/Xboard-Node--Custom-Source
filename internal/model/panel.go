@@ -90,6 +90,7 @@ func NodeSpecFromPanel(nc *panel.NodeConfig) *NodeSpec {
 		Protocol:            nc.Protocol,
 		ListenIP:            nc.ListenIP,
 		ServerPort:          nc.ServerPort,
+		PortHopping:         portHoppingFromPanel(nc.PortHopping),
 		Network:             nc.Network,
 		NetworkSettings:     cloneAnyMap(nc.NetworkSettings),
 		Routes:              routes,
@@ -229,6 +230,7 @@ func (n *NodeSpec) ToPanel() *panel.NodeConfig {
 		Protocol:            n.Protocol,
 		ListenIP:            n.ListenIP,
 		ServerPort:          n.ServerPort,
+		PortHopping:         portHoppingToPanel(n.PortHopping),
 		Network:             n.Network,
 		NetworkSettings:     cloneAnyMap(n.NetworkSettings),
 		Routes:              routes,
@@ -262,6 +264,20 @@ func (n *NodeSpec) ToPanel() *panel.NodeConfig {
 		Multiplex:           multiplex,
 		AcceptProxyProtocol: n.AcceptProxyProtocol,
 	}
+}
+
+func portHoppingFromPanel(p *panel.PortHopping) *PortHopping {
+	if p == nil {
+		return nil
+	}
+	return &PortHopping{Start: p.Start, End: p.End}
+}
+
+func portHoppingToPanel(p *PortHopping) *panel.PortHopping {
+	if p == nil {
+		return nil
+	}
+	return &panel.PortHopping{Start: p.Start, End: p.End}
 }
 
 func UserSpecsToPanel(users []UserSpec) []panel.User {

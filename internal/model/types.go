@@ -6,6 +6,7 @@ type NodeSpec struct {
 	Protocol        string
 	ListenIP        string
 	ServerPort      int
+	PortHopping     *PortHopping
 	Network         string
 	NetworkSettings map[string]any
 	Routes          []RouteRule
@@ -45,6 +46,19 @@ type NodeSpec struct {
 
 	Multiplex           *MultiplexConfig
 	AcceptProxyProtocol bool
+}
+
+type PortHopping struct {
+	Start int
+	End   int
+}
+
+func (p *PortHopping) Clone() *PortHopping {
+	if p == nil {
+		return nil
+	}
+	copy := *p
+	return &copy
 }
 
 type OutboundConfig struct {

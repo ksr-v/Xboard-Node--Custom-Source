@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/cedar2025/xboard-node/internal/config"
@@ -10,6 +11,9 @@ import (
 func ValidateNodeSpec(n *NodeSpec, kcfg config.KernelConfig) error {
 	if n == nil {
 		return nil
+	}
+	if err := ValidatePortHopping(n); err != nil {
+		return err
 	}
 
 	effectiveKernelType := strings.TrimSpace(kcfg.Type)
@@ -38,6 +42,25 @@ func ValidateNodeSpec(n *NodeSpec, kcfg config.KernelConfig) error {
 	}
 	if err := validateTransportKernel(n.Network, kernelType); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ValidatePortHopping rejects malformed privileged operations before any kernel
+// or nft changes. It is shared by all control-plane entry points.
+func ValidatePortHopping(n *NodeSpec) error {
+	if n == nil || n.PortHopping == nil {
+		return nil
+	}
+	p := n.PortHopping
+	if n.Protocol != "hysteria" || n.Version != 2 {
+		return fmt.Errorf("port_hopping requires Hysteria version 2")
+	}
+	if p.Start < 1 || p.End > 65535 || p.Start > p.End || n.ServerPort < 1 || n.ServerPort > 65535 {
+		return fmt.Errorf("port_hopping requires ascending UDP ports and a listener between 1 and 65535")
+	}
+	if n.ListenIP != "" && net.ParseIP(n.ListenIP) == nil {
+		return fmt.Errorf("port_hopping listen_ip must be an IP literal or empty")
 	}
 	return nil
 }
