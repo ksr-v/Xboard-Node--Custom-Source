@@ -19,14 +19,14 @@ import (
 )
 
 type Config struct {
-	InstanceID string `yaml:"-"`
-	Panel   PanelConfig   `yaml:"panel"`
-	Node    NodeConfig    `yaml:"node"`
-	Kernel  KernelConfig  `yaml:"kernel"`
-	Cert    CertConfig    `yaml:"cert"`
-	Log     LogConfig     `yaml:"log"`
-	Runtime RuntimeConfig `yaml:"runtime"`
-	WS      WSConfig      `yaml:"ws"`
+	InstanceID string        `yaml:"id,omitempty"`
+	Panel      PanelConfig   `yaml:"panel"`
+	Node       NodeConfig    `yaml:"node"`
+	Kernel     KernelConfig  `yaml:"kernel"`
+	Cert       CertConfig    `yaml:"cert"`
+	Log        LogConfig     `yaml:"log"`
+	Runtime    RuntimeConfig `yaml:"runtime"`
+	WS         WSConfig      `yaml:"ws"`
 	// Standalone enables a local-only node that never contacts the panel.
 	Standalone *StandaloneConfig `yaml:"standalone,omitempty"`
 	// HealthPort enables a lightweight HTTP health-check endpoint on the
@@ -329,11 +329,13 @@ func (rc *RootConfig) validateRoot() error {
 
 func (rc *RootConfig) NormalizeInstances() ([]*Config, error) {
 	if len(rc.Instances) == 0 {
-		id, err := rc.Config.AutoInstanceID()
-		if err != nil {
-			return nil, err
+		if rc.Config.InstanceID == "" {
+			id, err := rc.Config.AutoInstanceID()
+			if err != nil {
+				return nil, err
+			}
+			rc.Config.InstanceID = id
 		}
-		rc.Config.InstanceID = id
 		return []*Config{&rc.Config}, nil
 	}
 	out := make([]*Config, 0, len(rc.Instances))
@@ -688,6 +690,16 @@ func normalizeBaseURL(raw string) (string, string, error) {
 }
 
 func (c *Config) validate() error {
+	if c.InstanceID != "" {
+		if len(c.InstanceID) > 240 || c.InstanceID == "." || c.InstanceID == ".." {
+			return fmt.Errorf("instance id must be a safe path component")
+		}
+		for _, ch := range c.InstanceID {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.') {
+				return fmt.Errorf("instance id must contain only letters, digits, dot, underscore or hyphen")
+			}
+		}
+	}
 	if c.IsStandalone() {
 		if err := c.validateStandalone(); err != nil {
 			return err

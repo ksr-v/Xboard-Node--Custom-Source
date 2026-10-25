@@ -223,7 +223,9 @@ usage() {
     install      Install or replace ALL existing local bindings (default)
     upgrade      Upgrade binary and restart service
     uninstall    Disconnect/remove Node; retain private recovery backup
-    manage       node menu: upgrade / restart / uninstall
+    manage       node menu: update / restart / bindings / logs / status
+    configure    Edit an existing panel address/token interactively
+    logs         Show the last 100 service log lines
     restart      Restart this Node service only
     status       Show current installation status
     help         Show this help
@@ -313,13 +315,16 @@ open_menu_terminal() {
 
 management_menu() {
     local choice
-    printf '\nnode 管理\n1) 升级（保留当前绑定）\n2) 重启节点\n3) 卸载\n0) 退出\n'
-    menu_read -r -p '请选择 [0-3]: ' choice
+    printf '\nnode 管理\n1) 在线更新到最新正式版本（保留绑定）\n2) 重启节点\n3) 卸载\n4) 修改对接面板地址 / Token\n5) 查看最近日志\n6) 查看状态\n0) 退出\n'
+    menu_read -r -p '请选择 [0-6]: ' choice
     case "$choice" in
         0) exit 0 ;;
         1) ACTION=upgrade ;;
         2) ACTION=restart ;;
         3) ACTION=uninstall ;;
+        4) ACTION=configure ;;
+        5) ACTION=logs ;;
+        6) ACTION=status ;;
         *) log_error '无效选项，未执行操作'; return 1 ;;
     esac
 }
@@ -403,19 +408,150 @@ install_management_files() {
 }
 
 upgrade_from_menu() {
-    local script
-    script=$(curl -fsSL --max-time 30 --max-filesize 65536 "${DEFAULT_ASSET_BASE%/}/install.sh")
-    [ -n "$script" ]
-    bash -n <<< "$script"
-    # Run only a complete download; the new maintained script selects its pinned version.
-    bash -c "$script" -- upgrade
+    # Only published stable releases in this independent repository can supply
+    # a privileged updater. Partial downloads and checksum failures never run.
+    umask 077
+    TMP_DIR=$(mktemp -d)
+    local api='https://api.github.com/repos/ksr-v/Xboard-Node--Custom-Source/releases/latest'
+    curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 45 --max-filesize 1048576 \
+        -H 'Accept: application/vnd.github+json' "$api" -o "$TMP_DIR/release.json"
+    python3 - "$TMP_DIR/release.json" "$TMP_DIR/release-plan.json" <<'PY_RELEASE_PLAN'
+import json,re,sys
+from pathlib import Path
+d=json.loads(Path(sys.argv[1]).read_text())
+tag=d.get('tag_name','')
+assert d.get('draft') is False and d.get('prerelease') is False and re.fullmatch(r'v[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-orphan\.[0-9]+)?',tag), 'Invalid stable release'
+base='https://github.com/ksr-v/Xboard-Node--Custom-Source/releases/download/'+tag+'/'
+selected={}
+for name in ('install.sh','SHA256SUMS'):
+    rows=[a for a in d.get('assets',[]) if a.get('name')==name]
+    assert len(rows)==1 and rows[0].get('state')=='uploaded' and rows[0].get('browser_download_url')==base+name, 'Missing or foreign release asset'
+    digest=rows[0].get('digest')
+    assert digest is None or re.fullmatch(r'sha256:[a-f0-9]{64}',digest), 'Invalid asset digest'
+    selected[name]={'url':base+name,'digest':digest}
+Path(sys.argv[2]).write_text(json.dumps({'tag':tag,'assets':selected}))
+print('Latest stable Node release: '+tag)
+PY_RELEASE_PLAN
+    local asset url
+    for asset in SHA256SUMS install.sh; do
+        url=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["assets"][sys.argv[2]]["url"])' "$TMP_DIR/release-plan.json" "$asset")
+        curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --max-filesize 262144 "$url" -o "$TMP_DIR/$asset"
+    done
+    python3 - "$TMP_DIR" <<'PY_RELEASE_VERIFY'
+import hashlib,json,re,sys
+from pathlib import Path
+p=Path(sys.argv[1]); plan=json.loads((p/'release-plan.json').read_text())
+for name in ('SHA256SUMS','install.sh'):
+    data=(p/name).read_bytes(); assert data and len(data)<=262144, 'Incomplete release download'
+    digest=plan['assets'][name]['digest']
+    assert digest is None or digest=='sha256:'+hashlib.sha256(data).hexdigest(), 'Release API digest mismatch'
+rows=[]
+for line in (p/'SHA256SUMS').read_text().splitlines():
+    m=re.fullmatch(r'([a-fA-F0-9]{64}) [ *](.+)',line)
+    if m and m[2]=='install.sh': rows.append(m[1].lower())
+assert len(rows)==1 and rows[0]==hashlib.sha256((p/'install.sh').read_bytes()).hexdigest(), 'Installer checksum mismatch'
+assert b'\x00' not in (p/'install.sh').read_bytes(), 'Invalid installer bytes'
+PY_RELEASE_VERIFY
+    bash -n "$TMP_DIR/install.sh"
+    grep -q '^perform_upgrade()' "$TMP_DIR/install.sh"
+    grep -q '^verify_endpoint_binary()' "$TMP_DIR/install.sh"
+    log_info 'Release verified; upgrading Node and its management menu with existing bindings retained'
+    # Do not let stale install flags or download overrides select another source.
+    env -u XBOARD_NODE_RELEASE_VERSION -u XBOARD_NODE_DOWNLOAD_BASE -u XBOARD_NODE_ASSET_BASE \
+        /bin/bash "$TMP_DIR/install.sh" upgrade
+}
+
+verify_managed_service() {
+    local fragment dropins current count line
+    fragment=$(systemctl show --property=FragmentPath --value "$SERVICE_NAME")
+    dropins=$(systemctl show --property=DropInPaths --value "$SERVICE_NAME")
+    current=$(systemctl show --property=ExecStart --value "$SERVICE_NAME")
+    count=$(grep -c '^ExecStart=' "$SERVICE_PATH" || true)
+    if [ "$fragment" != "$SERVICE_PATH" ] || [ -n "$dropins" ] || [ "$count" != 1 ] ||
+       ! grep -Fqx "ExecStart=$BINARY_PATH -c $CONFIG_FILE" "$SERVICE_PATH" ||
+       [[ "$current" != *"argv[]=$BINARY_PATH -c $CONFIG_FILE ;"* ]]; then
+        log_error 'Custom service or drop-ins detected; review its actual config path before editing bindings'
+        return 1
+    fi
+    count=$(grep -c '^EnvironmentFile=' "$SERVICE_PATH" || true)
+    [ "$count" = 1 ] && { grep -Fqx "EnvironmentFile=-$CREDENTIALS_FILE" "$SERVICE_PATH" || grep -Fqx "EnvironmentFile=$CREDENTIALS_FILE" "$SERVICE_PATH"; } || {
+        log_error 'Service does not use the managed credential file; no files changed'; return 1;
+    }
+    while IFS= read -r line; do
+        case "$line" in
+            Environment=*) [ "$line" = "Environment=SSL_CERT_FILE=$ENDPOINT_TRUST_PATH" ] || { log_error 'Custom service environment requires manual review'; return 1; } ;;
+            PassEnvironment=*|UnsetEnvironment=*|ExecStartPre=*|ExecStartPost=*|ExecCondition=*) log_error 'Custom service execution/environment requires manual review'; return 1 ;;
+        esac
+    done < "$SERVICE_PATH"
+}
+
+perform_configure() {
+    set +x
+    detect_current_state
+    [ "$CURRENT_STATE" = installed ] || { log_error 'Editing bindings requires a complete standard installation'; return 1; }
+    [ -x "$CLI_PATH" ] || { log_error 'Update Node/xbctl first; the configuration editor is unavailable'; return 1; }
+    verify_managed_service
+    TMP_DIR=$(mktemp -d)
+    "$CLI_PATH" config inspect --config "$CONFIG_FILE" --credentials-file "$CREDENTIALS_FILE" > "$TMP_DIR/inspect.json" || {
+        log_error 'Cannot inspect this configuration; update xbctl or review its format manually'; return 1;
+    }
+    python3 - "$TMP_DIR/inspect.json" <<'PY_BINDINGS'
+import json,sys
+for i,r in enumerate(json.load(open(sys.argv[1]))['instances'],1):
+    target='machine '+str(r['machine_id']) if r['mode']=='machine' else 'node '+str(r.get('node_id') or r.get('node_ids'))
+    print(str(i)+') '+r['panel_url']+' ['+target+']')
+PY_BINDINGS
+    local count choice selected new_panel new_token
+    count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["instances"]))' "$TMP_DIR/inspect.json")
+    choice=1
+    if [ "$count" -gt 1 ]; then menu_read -r -p '选择要修改的对接编号（0 取消）: ' choice; fi
+    [ "$choice" != 0 ] || return 0
+    [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ] || { log_error 'Invalid binding selection'; return 1; }
+    selected=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["instances"][int(sys.argv[2])-1]["id"])' "$TMP_DIR/inspect.json" "$choice")
+    menu_read -r -p '新面板地址（HTTPS，留空保留）: ' new_panel
+    # Never trace the hidden token or subsequent private-file pipeline.
+    set +x
+    menu_read -r -s -p '新 Token（输入隐藏，留空保留）: ' new_token
+    printf '\n'
+    if [ -z "$new_panel$new_token" ]; then log_info 'No changes requested'; return 0; fi
+    printf '%s\0%s' "$new_panel" "$new_token" | python3 -c 'import json,sys; a,b=sys.stdin.buffer.read().split(b"\0",1); print(json.dumps({"panel_url":a.decode(),"api_token":b.decode()}))' > "$TMP_DIR/change.private.json"
+    unset new_token
+    local trust="${SSL_CERT_FILE:-}"
+    if [ -f "$ENDPOINT_TRUST_PATH" ]; then trust="$ENDPOINT_TRUST_PATH"; fi
+    SSL_CERT_FILE="$trust" "$CLI_PATH" config retarget --config "$CONFIG_FILE" --credentials-file "$CREDENTIALS_FILE" \
+        --instance "$selected" --input-file "$TMP_DIR/change.private.json" \
+        --out-config "$TMP_DIR/config.yml" --out-credentials "$TMP_DIR/credentials.env" \
+        --meta-file "$INSTALL_META" --out-meta "$TMP_DIR/install-meta.json" > "$TMP_DIR/staged.json"
+    load_health_port_from_config "$CONFIG_FILE"
+    ensure_dirs
+    backup_existing_state
+    stop_existing_service
+    local source destination mode pending
+    for source in config.yml credentials.env install-meta.json; do
+        destination="$INSTALL_ROOT/$source"; mode=600
+        [ "$source" != install-meta.json ] || mode=644
+        pending=$(mktemp "${destination}.new-XXXXXX")
+        install -m "$mode" "$TMP_DIR/$source" "$pending"
+        mv -f -- "$pending" "$destination"
+    done
+    if [ "$SERVICE_WAS_ACTIVE" -eq 1 ]; then
+        systemctl restart "$SERVICE_NAME"
+        wait_for_health
+    fi
+    log_info 'Panel address/token updated and authenticated; node/machine IDs, other bindings and private CA retained'
+    [ "$SERVICE_WAS_ACTIVE" -eq 1 ] || log_info 'The service was stopped and remains stopped'
+}
+
+perform_logs() {
+    log_info 'Recent Node service logs (last 100 lines); avoid sharing tokens or user data from logs'
+    journalctl -u "$SERVICE_NAME" -n 100 --no-pager
 }
 
 parse_args() {
     local positional=()
     while [ $# -gt 0 ]; do
         case "$1" in
-            install|upgrade|uninstall|status|help|manage|restart)
+            install|upgrade|uninstall|status|help|manage|restart|configure|logs)
                 ACTION="$1"
                 shift
                 ;;
@@ -1297,6 +1433,7 @@ main() {
         fi
     fi
     if [ "$ACTION" = uninstall ] && [ "$YES" -eq 0 ] && [ "$MENU_FD" -eq 0 ]; then open_menu_terminal; fi
+    if [ "$ACTION" = configure ] && [ "$MENU_FD" -eq 0 ]; then open_menu_terminal; fi
     case "$ACTION" in
         help)
             usage
@@ -1337,6 +1474,12 @@ main() {
             systemctl restart "$SERVICE_NAME"
             wait_for_health
             log_info 'Node restarted'
+            ;;
+        configure)
+            perform_configure
+            ;;
+        logs)
+            perform_logs
             ;;
         *)
             log_error "Unknown action: $ACTION"

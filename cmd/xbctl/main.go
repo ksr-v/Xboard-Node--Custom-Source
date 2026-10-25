@@ -203,6 +203,8 @@ func printUsage() {
   xbctl instance get <id> [--output text|json]
   xbctl config init --mode node|machine --panel-url URL --token TOKEN [flags]
   xbctl config health-port [--config PATH]
+  xbctl config inspect [--config PATH]
+  xbctl config retarget --config PATH --credentials-file PATH --instance ID --input-file PRIVATE_JSON --out-config PATH --out-credentials PATH
   xbctl service status|start|stop|restart|enable|disable|logs
   xbctl health
   xbctl bind add-node --panel-url URL --token TOKEN --node-id ID [--node-type TYPE] [--kernel singbox|xray]
@@ -1196,13 +1198,17 @@ func machineIDPtr(cfg *config.Config) *int {
 
 func runConfig(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: xbctl config <init|health-port>")
+		return errors.New("usage: xbctl config <init|health-port|inspect|retarget>")
 	}
 	switch args[0] {
 	case "init":
 		return runConfigInit(args[1:])
 	case "health-port":
 		return runConfigHealthPort(args[1:])
+	case "inspect":
+		return runConfigInspect(args[1:])
+	case "retarget":
+		return runConfigRetarget(args[1:])
 	default:
 		return fmt.Errorf("unknown config command: %s", args[0])
 	}
@@ -1495,7 +1501,11 @@ func writeInstallMetaVersioned(path string, root *config.RootConfig, ver, latest
 	instances := normalizeRootInstances(root)
 	items := make([]instanceSummary, 0, len(instances))
 	for _, inst := range instances {
-		id, err := inst.AutoInstanceID()
+		id := inst.InstanceID
+		var err error
+		if id == "" {
+			id, err = inst.AutoInstanceID()
+		}
 		if err != nil {
 			return err
 		}

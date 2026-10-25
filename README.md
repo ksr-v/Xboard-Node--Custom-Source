@@ -48,6 +48,8 @@ node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 http
 
 ### 本机管理命令
 
+开发分支新增[完整 node 管理菜单](NODE_MANAGEMENT.zh-CN.md)：修改面板地址／Token、查看日志、重启、状态及按最新正式 Release 在线更新；需首次配套升级 Node、xbctl 和安装器。当前下方 v1.13-orphan.5 发行命令不包含新增选项，开发功能尚未发布。
+
 已有标准安装也可直接使用同一维护入口的 `upgrade` 动作，保留配置和绑定，不进入安装／卸载菜单：
 
 ```bash
@@ -57,13 +59,16 @@ node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 http
 安装成功后输入小写 `node`（大小写敏感，`Node` / `NODE` 不适用）：
 
 ```text
-1) 升级（保留当前绑定）
+1) 在线更新到最新正式版本（保留绑定）
 2) 重启节点
 3) 卸载
+4) 修改对接面板地址 / Token
+5) 查看最近日志
+6) 查看状态
 0) 退出
 ```
 
-非 root 用户会请求 sudo。升级先完整获取本项目维护的安装脚本，再升级到该脚本固定的版本；保留当前配置、凭据、实例文件和原健康端口（包括 `0`）。重启仅操作 `xboard-node.service`。如果系统已存在 Node.js 或其他程序的 `node` 命令，安装／升级会安全拒绝，不覆盖或遮蔽；需先自行解决命令冲突。
+非 root 用户会请求 sudo。新版菜单从本项目 latest 正式 Release 完整获取并校验安装器，再升级到该脚本固定的版本，保留当前配置、凭据、实例文件和原健康端口（包括 `0`）；历史 v1.13-orphan.5 菜单仍使用其原来的维护脚本入口。重启仅操作 `xboard-node.service`。如果系统已存在 Node.js 或其他程序的 `node` 命令，安装／升级会安全拒绝，不覆盖或遮蔽；需先自行解决命令冲突。
 
 ### 旧版检测、覆盖与恢复边界
 
