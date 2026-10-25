@@ -31,12 +31,12 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.5}"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.6}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
 DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/dev}"
-INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.5"
+INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.6"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -249,7 +249,7 @@ usage() {
     --kernel, -k        singbox or xray (default: singbox)
     --endpoint-ca-base64       Panel-generated public CA bundle (no private key)
     --endpoint-ca-fingerprint  Independently delivered SHA-256 root pins
-    --version           Fixed release version (this installer verifies v1.13-orphan.5 only)
+    --version           Fixed release version (this installer verifies v1.13-orphan.6 only)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
@@ -975,23 +975,23 @@ stage_endpoint_trust() {
         ENDPOINT_TRUST=1
     fi
     if [ "$ENDPOINT_TRUST" -eq 1 ]; then
-        [ "$RELEASE_VERSION" = v1.13-orphan.5 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.5'; return 1; }
+        [ "$RELEASE_VERSION" = v1.13-orphan.6 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.6'; return 1; }
     fi
 }
 
 verify_endpoint_binary() {
     # Pin executable bytes for both domain and private-CA installations. Changing
     # the CA mode must never disable the release's binary integrity check.
-    [ "$RELEASE_VERSION" = v1.13-orphan.5 ] || {
-        log_error 'This installer can only verify v1.13-orphan.5 assets; use the matching audited installer for another release'
+    [ "$RELEASE_VERSION" = v1.13-orphan.6 ] || {
+        log_error 'This installer can only verify v1.13-orphan.6 assets; use the matching audited installer for another release'
         return 1
     }
     local expected
     case "$1:$ARCH" in
-        node:amd64) expected=0f3aeda43036081c668826a87cf4c35d227ac8a0a4488ccebab2a4c74db1b78f ;;
-        node:arm64) expected=02dad963d2b9732093c43397b6d210bfaa52391821747e9e47dbb6cfd1b61b86 ;;
-        xbctl:amd64) expected=c831cc732377906de5d516aad065e9b50b572e1576b8b4e3d1f2450a7a9adb9b ;;
-        xbctl:arm64) expected=a6541cafd327afac8cc3f01717b4979acd9e17da5c49395c3a3d95e921f11ca5 ;;
+        node:amd64) expected=ffe4878de3fcb16b16279e4b883e0e4d845e16ec16639a265903c270165978b9 ;;
+        node:arm64) expected=ffc93d22a75713528292f45c1b459c03a456275c33662d14db48fee135ec99c2 ;;
+        xbctl:amd64) expected=18efe4e1cba9988dcbbdff14532986b9b352637001acf585e8d6066b8f8bb7d0 ;;
+        xbctl:arm64) expected=518e2164dea5735a848f1f90edfeeb1fdc5222421ba773fce7fde49c73ea9c89 ;;
         *) log_error 'Unsupported pinned Node asset'; return 1 ;;
     esac
     if ! printf '%s  %s\n' "$expected" "$2" | sha256sum -c - >/dev/null; then
