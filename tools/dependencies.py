@@ -492,9 +492,13 @@ def build(dest, arch, test=False, host=False, isolated=False):
         version = os.environ.get('VERSION', commit + '-deps')
         build_time = os.environ.get('BUILD_TIME', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
         ldflags = os.environ.get('LDFLAGS', f'-s -w -X main.version={version} -X main.buildTime={build_time} -X main.commit={commit}')
+        from release_metadata import settings
+        release_flags = settings(version, run(['go', 'version'], env))
+        if release_flags is not None:
+            ldflags = release_flags
         for name in ('xboard-node', 'xbctl'):
             suffix = '.exe' if host and os.name == 'nt' else ('' if host else '-linux-' + arch)
-            run(['go', 'build', '-trimpath', '-tags', HOST_TAGS if host else TAGS, '-ldflags', ldflags,
+            run(['go', 'build', '-buildvcs=false', '-trimpath', '-tags', HOST_TAGS if host else TAGS, '-ldflags', ldflags,
                  '-o', str(out / (name + suffix)), './cmd/' + name], env, capture=False)
 
 

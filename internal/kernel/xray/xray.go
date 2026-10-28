@@ -58,20 +58,21 @@ type Xray struct {
 
 	// mu protects instance, limitDispatcher, users, protocol, inboundTag,
 	// lastKernelHash, and cumTraffic. Never held during slow I/O.
-	mu              sync.Mutex
-	instance        *xrayCore.Instance
-	limitDispatcher *LimitDispatcher
-	users           []model.UserSpec
-	nodeConfig      *model.NodeSpec
-	tls             kernel.TLSCert
-	protocol        string
-	inboundTag      string
-	lastKernelHash  string
-	cumTraffic      map[int][2]int64
-	speedLimitFunc  func(string) *rate.Limiter
-	instanceCancel  context.CancelFunc
-	activeConfig    []byte
-	activePolicy    []byte
+	mu                  sync.Mutex
+	instance            *xrayCore.Instance
+	limitDispatcher     *LimitDispatcher
+	users               []model.UserSpec
+	nodeConfig          *model.NodeSpec
+	tls                 kernel.TLSCert
+	protocol            string
+	inboundTag          string
+	lastKernelHash      string
+	cumTraffic          map[int][2]int64
+	speedLimitFunc      func(string) *rate.Limiter
+	deviceAdmissionFunc func(uuid, sourceIP string) (release func(), err error)
+	instanceCancel      context.CancelFunc
+	activeConfig        []byte
+	activePolicy        []byte
 
 	// running is set after a successful Start and cleared before shutdown.
 	// Atomic so IsRunning / GetConnections never block.
@@ -94,7 +95,7 @@ func (x *Xray) Capabilities() kernel.Capabilities {
 		BuiltInTrafficStats:  true,
 		AliveIPTracking:      true,
 		ForceCloseConnection: false,
-		ForceCloseUser:       false,
+		ForceCloseUser:       true,
 	}
 }
 
@@ -123,7 +124,7 @@ type preparedXray struct {
 	cancel     context.CancelFunc
 }
 
-func prepareXray(data []byte, users []model.UserSpec, fn func(string) *rate.Limiter) (*preparedXray, error) {
+func prepareXray(data []byte, users []model.UserSpec, fn func(string) *rate.Limiter, admission func(uuid, sourceIP string) (release func(), err error)) (*preparedXray, error) {
 	pbConfig, err := serial.LoadJSONConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("parse xray config: %w", err)
@@ -139,6 +140,9 @@ func prepareXray(data []byte, users []model.UserSpec, fn func(string) *rate.Limi
 		return nil, fmt.Errorf("create xray: %w", err)
 	}
 	applyDispatcherLimits(ld, users)
+	if ld != nil {
+		ld.SetDeviceAdmissionFunc(admission)
+	}
 	applyBandwidthLimits(inst, fn, users)
 	return &preparedXray{instance: inst, dispatcher: ld, cancel: cancel}, nil
 }
@@ -179,6 +183,9 @@ func (x *Xray) rollbackConfigLocked() ([]byte, error) {
 }
 
 func (x *Xray) installPreparedLocked(p *preparedXray, data, policy []byte, nc *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) {
+	if p.dispatcher != nil {
+		p.dispatcher.SetDeviceAdmissionFunc(x.deviceAdmissionFunc)
+	}
 	x.instance = p.instance
 	x.limitDispatcher = p.dispatcher
 	x.instanceCancel = p.cancel
@@ -209,11 +216,12 @@ func (x *Xray) startLocked(nc *model.NodeSpec, users []model.UserSpec, tls kerne
 	oldPolicy := append([]byte(nil), x.activePolicy...)
 	oldData, snapshotErr := x.rollbackConfigLocked()
 	fn := x.speedLimitFunc
+	admission := x.deviceAdmissionFunc
 	x.mu.Unlock()
 	if snapshotErr != nil {
 		return fmt.Errorf("snapshot running xray: %w", snapshotErr)
 	}
-	candidate, err := prepareXray(data, users, fn)
+	candidate, err := prepareXray(data, users, fn, admission)
 	if err != nil {
 		return fmt.Errorf("prepare xray reload (running configuration retained): %w", err)
 	}
@@ -243,7 +251,7 @@ func (x *Xray) startLocked(nc *model.NodeSpec, users []model.UserSpec, tls kerne
 		if old == nil {
 			return err
 		}
-		previous, rollbackErr := prepareXray(oldData, oldUsers, fn)
+		previous, rollbackErr := prepareXray(oldData, oldUsers, fn, admission)
 		if rollbackErr == nil {
 			rollbackErr = startWithTimeout(previous.instance, startTimeout)
 			if rollbackErr == nil {
@@ -326,8 +334,8 @@ func tlsEqual(a, b kernel.TLSCert) bool {
 
 // GetUserTraffic returns per-user cumulative traffic from xray's built-in
 // stats pipeline and connection state from the admission dispatcher when
-// available. The dispatcher intentionally no longer wraps transport links,
-// so traffic accounting must come from xray-core itself.
+// available. Its writer observer tracks lifecycle only; byte accounting
+// continues to come from xray-core itself.
 func (x *Xray) GetUserTraffic(_ context.Context) (traffic map[int][2]int64, aliveIPs map[int]map[string]bool, connCount int, err error) {
 	if !x.running.Load() {
 		return nil, nil, 0, nil
@@ -351,14 +359,31 @@ func (x *Xray) GetUserTraffic(_ context.Context) (traffic map[int][2]int64, aliv
 	return traffic, aliveIPs, connCount, nil
 }
 
+// HasUserSourceIP waits for an in-progress Stop/replacement before consulting
+// the current dispatcher. Stop clears its pointer before old flows drain.
+// This optional probe therefore runs only from asynchronous release work.
+func (x *Xray) HasUserSourceIP(uuid, sourceIP string) bool {
+	x.lifecycleMu.Lock()
+	defer x.lifecycleMu.Unlock()
+	x.mu.Lock()
+	ld := x.limitDispatcher
+	x.mu.Unlock()
+	return ld != nil && ld.HasUserSourceIP(uuid, sourceIP)
+}
+
 func (x *Xray) CloseConnection(_ context.Context, _ string) error {
 	// No-op: xray doesn't support force-closing individual connections.
 	// User removal goes through RemoveUsers which removes the inbound user.
 	return nil
 }
 
-func (x *Xray) CloseUserConnections(_ context.Context, _ string) error {
-	// No-op: handled by RemoveUsers at the xray core level.
+func (x *Xray) CloseUserConnections(_ context.Context, uuid string) error {
+	x.mu.Lock()
+	ld := x.limitDispatcher
+	x.mu.Unlock()
+	if ld != nil {
+		ld.CloseByUUID(uuid)
+	}
 	return nil
 }
 
@@ -376,11 +401,33 @@ func (x *Xray) SetSpeedLimitFunc(fn func(string) *rate.Limiter) {
 // gate-kept by LimitDispatcher.checkDeviceLimit at Dispatch time.
 func (x *Xray) SetDeviceLimitFunc(_ func(string) (int, bool)) {}
 
-// UpdateGlobalDevices is a no-op for xray — xray handles device limits differently.
-func (x *Xray) UpdateGlobalDevices(_ map[int][]string) {}
+func (x *Xray) SetDeviceAdmissionFunc(fn func(uuid, sourceIP string) (release func(), err error)) {
+	x.mu.Lock()
+	x.deviceAdmissionFunc = fn
+	ld := x.limitDispatcher
+	x.mu.Unlock()
+	if ld != nil {
+		ld.SetDeviceAdmissionFunc(fn)
+	}
+}
 
-// ClearGlobalDevices is a no-op for xray.
-func (x *Xray) ClearGlobalDevices() {}
+func (x *Xray) UpdateGlobalDevices(users map[int][]string) {
+	x.mu.Lock()
+	ld := x.limitDispatcher
+	x.mu.Unlock()
+	if ld != nil {
+		ld.UpdateGlobalDevices(users)
+	}
+}
+
+func (x *Xray) ClearGlobalDevices() {
+	x.mu.Lock()
+	ld := x.limitDispatcher
+	x.mu.Unlock()
+	if ld != nil {
+		ld.ClearGlobalDevices()
+	}
+}
 
 // ─── User management (non-disruptive where possible) ────────────────────────
 
@@ -889,12 +936,15 @@ func applyDispatcherLimits(ld *LimitDispatcher, users []model.UserSpec) {
 	}
 
 	emailToUID := make(map[string]int, len(users)*2)
+	emailToUUID := make(map[string]string, len(users)*2)
 	deviceLimits := make(map[string]int)
 
 	for _, u := range users {
 		email := userEmail(u.ID)
 		emailToUID[email] = u.ID
 		emailToUID[u.UUID] = u.ID
+		emailToUUID[email] = u.UUID
+		emailToUUID[u.UUID] = u.UUID
 		if u.DeviceLimit > 0 {
 			deviceLimits[email] = u.DeviceLimit
 			deviceLimits[u.UUID] = u.DeviceLimit
@@ -902,6 +952,7 @@ func applyDispatcherLimits(ld *LimitDispatcher, users []model.UserSpec) {
 	}
 
 	ld.UpdateLimits(emailToUID, deviceLimits, nil)
+	ld.SetUserUUIDs(emailToUUID)
 }
 
 // xrayCreationMu serialises xrayCore.New() + globalLimitDispatcher capture

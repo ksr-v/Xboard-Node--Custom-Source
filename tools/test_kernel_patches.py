@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ class MaintainedCorePatchTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.environment = {'PATH': os.environ.get('PATH', os.defpath), 'GOTOOLCHAIN': 'local'}
         self.module = self.root / 'cache/core'
         self.original = self.module / 'app/dispatcher/default.go'
         self.original.parent.mkdir(parents=True)
@@ -35,7 +37,7 @@ class MaintainedCorePatchTest(unittest.TestCase):
         self.addCleanup(self.resolve.stop)
 
     def test_uses_verified_maintained_copy_without_mutating_cache_or_go_mod(self):
-        flags = k.prepare({}, self.root)
+        flags = k.prepare(self.environment, self.root)
         self.assertIn('-modfile=', flags)
         maintained = next((self.root / '.dependency-work').glob('xray-core-*'))
         self.assertEqual((maintained / 'app/dispatcher/default.go').read_bytes(), self.patched.read_bytes())
@@ -45,26 +47,26 @@ class MaintainedCorePatchTest(unittest.TestCase):
         self.assertNotIn(self.root.as_posix(), (self.root / '.dependency-work/kernel-build.mod').read_text())
 
     def test_modified_maintained_copy_refused(self):
-        k.prepare({}, self.root)
+        k.prepare(self.environment, self.root)
         maintained = next((self.root / '.dependency-work').glob('xray-core-*'))
         (maintained / 'unexpected.go').write_text('unexpected source')
         with self.assertRaisesRegex(ValueError, 'Maintained kernel copy was modified'):
-            k.prepare({}, self.root)
+            k.prepare(self.environment, self.root)
 
     def test_original_module_tampering_refused(self):
         self.original.write_bytes(b'wrong original')
         with self.assertRaisesRegex(ValueError, 'Original pinned core'):
-            k.prepare({}, self.root)
+            k.prepare(self.environment, self.root)
 
     def test_patch_tampering_refused(self):
         self.patched.write_bytes(b'wrong patch')
         with self.assertRaisesRegex(ValueError, 'Maintained core patch checksum'):
-            k.prepare({}, self.root)
+            k.prepare(self.environment, self.root)
 
     def test_changed_module_version_refused(self):
         with patch.object(k, '_go', return_value={'Replace': {'Path': 'test/frozen-core', 'Version': 'v2.0.0'}}):
             with self.assertRaisesRegex(ValueError, 'fixed module version'):
-                k.prepare({}, self.root)
+                k.prepare(self.environment, self.root)
 
 
 if __name__ == '__main__':

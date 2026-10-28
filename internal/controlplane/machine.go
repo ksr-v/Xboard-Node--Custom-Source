@@ -15,9 +15,10 @@ import (
 // with machine-level auth; WS events are delivered via an externally-managed
 // PushClient supplied by the machine WS mux.
 type MachinePanelControlPlane struct {
-	client *panel.Client
-	kcfg   config.KernelConfig
-	push   PushClient // virtual push client from WS mux (may be nil)
+	client          *panel.Client
+	kcfg            config.KernelConfig
+	push            PushClient // virtual push client from WS mux (may be nil)
+	deviceAdmission bool
 
 	registerFn func(statuses chan<- StatusChange) *NodeMailbox
 }
@@ -61,6 +62,7 @@ func (p *MachinePanelControlPlane) Initial(
 
 	bootstrap := Bootstrap{}
 	if hs != nil {
+		p.deviceAdmission = hs.DeviceAdmission.Version == 1
 		bootstrap.PushInterval = hs.Settings.PushInterval
 		bootstrap.PullInterval = hs.Settings.PullInterval
 	}

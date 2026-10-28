@@ -40,9 +40,11 @@ type Client struct {
 	configETag string
 	userETag   string
 
-	apiSuccess atomic.Uint64
-	apiFailure atomic.Uint64
-	address    addressReporter
+	apiSuccess            atomic.Uint64
+	apiFailure            atomic.Uint64
+	deviceAdmission       atomic.Bool
+	retainedDeviceRelease atomic.Bool
+	address               addressReporter
 }
 
 // NewClient creates a new panel API client.
@@ -101,6 +103,8 @@ func (c *Client) Handshake() (*HandshakeResponse, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&hs); err != nil {
 		return nil, fmt.Errorf("decode handshake: %w", err)
 	}
+	c.deviceAdmission.Store(hs.DeviceAdmission.Version == 1)
+	c.retainedDeviceRelease.Store(hs.DeviceAdmission.Version == 1 && hs.DeviceAdmission.RetainIP)
 	return &hs, nil
 }
 
@@ -128,7 +132,9 @@ func (c *Client) Report(traffic map[int][2]int64, alive map[int][]string, online
 		}()
 	}
 
-	if len(alive) > 0 {
+	// nil means this request has no device snapshot; a non-nil empty map is
+	// an explicit full snapshot clearing this node's previously reported IPs.
+	if alive != nil {
 		a := aliveMapPool.Get().(map[string][]string)
 		for uid, ips := range alive {
 			a[strconv.Itoa(uid)] = ips
@@ -448,7 +454,15 @@ func (c *Client) doRequestContext(ctx context.Context, method, path string, body
 	nlog.Core().Debug("panel request", "method", method, "path", path)
 
 	client := c.httpClient
-	if path == addressPath {
+	if path == "/api/v2/server/report" && c.deviceAdmission.Load() {
+		// Leases expire after at least 60 seconds. The watchdog stops forwarding
+		// before that deadline, so a late 30-second HTTP ACK must not renew its
+		// local safety window after the corresponding panel lease has expired.
+		bounded := *client
+		bounded.Timeout = 2 * time.Second
+		client = &bounded
+	}
+	if path == addressPath || path == "/api/v2/server/device/acquire" || path == "/api/v2/server/device/release" {
 		// Reuse the existing transport and identity; never forward a credential on redirect.
 		optional := *client
 		optional.Timeout = 5 * time.Second

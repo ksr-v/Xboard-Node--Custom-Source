@@ -209,7 +209,9 @@ func buildInbound(nc *model.NodeSpec, users []model.UserSpec, tc kernel.TLSCert)
 		"protocol": nc.Protocol,
 		"streamSettings": M{
 			"sockopt": M{
-				"reusePort": true,
+				"reusePort":            true,
+				"tcpKeepAliveIdle":     10,
+				"tcpKeepAliveInterval": 3,
 			},
 		},
 	}
@@ -461,6 +463,11 @@ func buildHysteria(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel
 
 func applyStreamSettings(base M, nc *model.NodeSpec, tc kernel.TLSCert) {
 	ss := M{}
+	if existing, ok := base["streamSettings"].(M); ok {
+		if sockopt, ok := existing["sockopt"].(M); ok {
+			ss["sockopt"] = sockopt
+		}
+	}
 
 	// Network / transport
 	network := nc.Network

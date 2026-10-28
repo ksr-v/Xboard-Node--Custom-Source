@@ -53,8 +53,9 @@ type Service struct {
 		Users  []model.UserSpec
 	}
 
-	pushInterval int // seconds
-	pullInterval int // seconds
+	pushInterval     int // seconds
+	pullInterval     int // seconds
+	deviceLeaseGuard *deviceLeaseGuard
 
 	lastUserHash   string     // hash of user list for change detection
 	lastConfigHash string     // hash of full config for change detection
@@ -193,6 +194,7 @@ func (s *Service) Run(ctx context.Context) error {
 	defer s.kernel.Stop()
 
 	// Set up tickers
+	s.tracker.SetTrackInterval(s.cfg.Node.TrackInterval)
 	trackTicker := time.NewTicker(time.Duration(s.cfg.Node.TrackInterval) * time.Second)
 	pushInterval := time.Duration(math.Max(float64(s.pushInterval), 5)) * time.Second
 	pullInterval := time.Duration(s.pullInterval) * time.Second
@@ -292,6 +294,8 @@ func (s *Service) initialSetup(ctx context.Context) error {
 	if s.pullInterval == 0 {
 		s.pullInterval = 60
 	}
+
+	s.installDeviceAdmission()
 
 	if bootstrap.Push != nil {
 		s.wsClient = bootstrap.Push
@@ -1031,6 +1035,7 @@ func (s *Service) trackAndEnforce(ctx context.Context) {
 	}
 
 	s.tracker.Process(traffic, aliveIPs, connCount)
+	s.enforceDeviceLeaseAt(ctx, time.Now())
 
 	// Only log stats if there's actual traffic or connections
 	if connCount > 0 || len(traffic) > 0 {
@@ -1052,7 +1057,10 @@ func (s *Service) pushReportAsync() {
 		nlog.Core().Debug("push already in progress, skipping")
 		return
 	}
-	if s.pushBackoff.shouldSkip() {
+	// Capable nodes use reports as safety-lease heartbeats. Keep attempting
+	// once per normal five-second tick rather than skipping up to eight ticks
+	// after failures; each request is already bounded to two seconds.
+	if s.deviceLeaseGuard == nil && s.pushBackoff.shouldSkip() {
 		nlog.Core().Debug("skipping report due to backoff")
 		s.pushActive.Store(false)
 		return
@@ -1072,13 +1080,14 @@ func (s *Service) pushReportAsync() {
 			if len(traffic) > 0 {
 				s.tracker.RestoreTraffic(traffic)
 			}
-			if len(aliveIPs) > 0 {
-				s.tracker.RestoreAliveIPs(aliveIPs)
-			}
+			// Device reports are complete snapshots, not consumed deltas.
+			// Retry the latest tracked state next time; restoring this request's
+			// old IPs could resurrect connections that closed while it was in flight.
 			s.pushBackoff.onFailure()
 			return
 		}
 		s.pushBackoff.onSuccess()
+		s.acknowledgeDeviceReportAt(time.Now())
 		nlog.ReportPushed(len(traffic), len(online))
 	}()
 }
@@ -1097,6 +1106,8 @@ func (s *Service) pushReportSync() {
 
 	if err := s.sink.Report(controlplane.ReportPayload{Traffic: traffic, Alive: aliveIPs, Online: online, CPU: status.CPU, Mem: [2]uint64{status.MemTotal, status.MemUsed}, Swap: [2]uint64{status.SwapTotal, status.SwapUsed}, Disk: [2]uint64{status.DiskTotal, status.DiskUsed}, Metrics: metrics}); err != nil {
 		nlog.Core().Warn("failed to push final report", "error", err)
+	} else {
+		s.acknowledgeDeviceReportAt(time.Now())
 	}
 }
 
@@ -1162,6 +1173,7 @@ func (s *Service) buildMetrics(status monitor.Status) map[string]interface{} {
 		"enabled":   wsEnabled,
 		"connected": wsConnected,
 	}
+	m["device_report_interval"] = max(5, s.pushInterval)
 
 	// Limiter metrics.
 	lm := s.limiter.SnapshotMetrics()
@@ -1218,11 +1230,8 @@ func (s *Service) sendDeviceBatch() {
 	}
 
 	devices := s.tracker.FlushAliveIPs()
-	// FlushAliveIPs returns nil if no changes since last flush
-	if devices == nil {
-		nlog.Core().Debug("device snapshot unchanged, skipping")
-		return
-	}
+	// Refresh the panel lease even when the IP set is unchanged. Explicitly
+	// empty snapshots clear the last user's devices without waiting for TTL.
 	s.sink.ReportDevices(s.wsClient, devices)
 	nlog.Core().Debug("device snapshot sent", "users", len(devices))
 }

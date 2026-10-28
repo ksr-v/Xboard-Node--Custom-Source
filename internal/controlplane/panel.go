@@ -12,10 +12,11 @@ import (
 )
 
 type PanelControlPlane struct {
-	cfg    config.PanelConfig
-	wsCfg  config.WSConfig
-	kcfg   config.KernelConfig
-	client *panel.Client
+	cfg             config.PanelConfig
+	wsCfg           config.WSConfig
+	kcfg            config.KernelConfig
+	client          *panel.Client
+	deviceAdmission bool
 }
 
 type panelPushClient struct {
@@ -41,6 +42,7 @@ func (p *PanelControlPlane) Initial(ctx context.Context, metricsFn func() map[st
 	if err != nil {
 		return Bootstrap{}, fmt.Errorf("handshake: %w", err)
 	}
+	p.deviceAdmission = hs.DeviceAdmission.Version == 1
 
 	bootstrap := Bootstrap{PushInterval: hs.Settings.PushInterval, PullInterval: hs.Settings.PullInterval}
 	if hs.WebSocket.Enabled && hs.WebSocket.WSURL != "" {

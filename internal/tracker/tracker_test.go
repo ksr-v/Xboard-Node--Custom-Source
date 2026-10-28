@@ -1,6 +1,8 @@
 package tracker
 
 import (
+	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -164,10 +166,100 @@ func TestFlushAliveIPs(t *testing.T) {
 		t.Errorf("user 2 IPs: got %d, want 1", len(flushed[2]))
 	}
 
-	// Without another Process call, hash is same → returns nil (skip duplicate)
+	// Repeated full snapshots renew the panel lease even without new traffic.
 	flushed2 := tr.FlushAliveIPs()
-	if flushed2 != nil {
-		t.Errorf("expected nil on duplicate flush, got %v", flushed2)
+	if !reflect.DeepEqual(flushed, flushed2) {
+		t.Errorf("heartbeat lost unchanged devices: first %v, second %v", flushed, flushed2)
+	}
+}
+
+func TestFlushAliveIPs_IndependentRESTAndWSSnapshots(t *testing.T) {
+	tr := New()
+	tr.Process(nil, map[int]map[string]bool{1: {"1.1.1.1": true}}, 1)
+	rest := tr.FlushAliveIPs()
+	ws := tr.FlushAliveIPs()
+	rest[1][0] = "modified-by-transport"
+	delete(rest, 1)
+	if !reflect.DeepEqual(ws, map[int][]string{1: {"1.1.1.1"}}) {
+		t.Fatalf("transport snapshots alias each other: %v", ws)
+	}
+	tr.Process(nil, map[int]map[string]bool{1: {"2.2.2.2": true}}, 1)
+	if ws[1][0] != "1.1.1.1" {
+		t.Fatalf("in-flight snapshot changed during Process: %v", ws)
+	}
+	if got := tr.FlushAliveIPs(); !reflect.DeepEqual(got, map[int][]string{1: {"2.2.2.2"}}) {
+		t.Fatalf("new snapshot did not use latest state: %v", got)
+	}
+}
+
+func TestFlushAliveIPs_DisconnectProducesExplicitEmptySnapshot(t *testing.T) {
+	tr := New()
+	tr.Process(nil, map[int]map[string]bool{1: {"1.1.1.1": true}, 2: {"2.2.2.2": true}}, 2)
+	tr.FlushAliveIPs()
+	tr.Process(nil, map[int]map[string]bool{2: {"2.2.2.2": true}}, 1)
+	if got := tr.FlushAliveIPs(); !reflect.DeepEqual(got, map[int][]string{2: {"2.2.2.2"}}) {
+		t.Fatalf("closed user's IP remained in full snapshot: %v", got)
+	}
+	tr.Process(nil, nil, 0)
+	for transport := 0; transport < 2; transport++ {
+		if got := tr.FlushAliveIPs(); got == nil || len(got) != 0 {
+			t.Fatalf("last disconnect must report explicit empty snapshot: %#v", got)
+		}
+	}
+}
+
+func TestFlushAliveIPs_FailedReportRetriesCurrentState(t *testing.T) {
+	tr := New()
+	tr.Process(nil, map[int]map[string]bool{1: {"1.1.1.1": true}}, 1)
+	failedRequest := tr.FlushAliveIPs()
+	// A report can fail after its connection has closed. A retry must report
+	// current state rather than merge the stale in-flight IP back into it.
+	tr.Process(nil, nil, 0)
+	if got := tr.FlushAliveIPs(); got == nil || len(got) != 0 {
+		t.Fatalf("retry resurrected disconnected device: %v (old %v)", got, failedRequest)
+	}
+}
+
+func TestFlushAliveIPs_ConcurrentReadersOwnTheirMaps(t *testing.T) {
+	tr := New()
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			tr.Process(nil, map[int]map[string]bool{1: {"1.1.1.1": true}}, 1)
+		}
+	}()
+	for transport := 0; transport < 2; transport++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				data := tr.FlushAliveIPs()
+				data[99] = []string{"transport-local"}
+				delete(data, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := tr.FlushAliveIPs(); !reflect.DeepEqual(got, map[int][]string{1: {"1.1.1.1"}}) {
+		t.Fatalf("concurrent transport mutated tracker: %v", got)
+	}
+}
+
+func TestSpeedTelemetryUsesConfiguredTrackingInterval(t *testing.T) {
+	for _, seconds := range []int{1, 5, 10} {
+		tr := New()
+		tr.SetTrackInterval(seconds)
+		tr.Process(map[int][2]int64{1: {int64(1000 * seconds), int64(2000 * seconds)}}, nil, 1)
+		// Preserve the existing wire convention: inbound is downloaded bytes,
+		// outbound is uploaded bytes. Only the time divisor changes.
+		if tr.InboundSpeed() != 2000 || tr.OutboundSpeed() != 1000 {
+			t.Fatalf("%d-second tracker reported rates %d/%d; want 2000/1000", seconds, tr.InboundSpeed(), tr.OutboundSpeed())
+		}
+		traffic := tr.FlushTraffic()
+		if traffic[1] != [2]int64{int64(1000 * seconds), int64(2000 * seconds)} {
+			t.Fatal("rate display interval changed traffic accounting")
+		}
 	}
 }
 

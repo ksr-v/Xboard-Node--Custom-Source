@@ -18,6 +18,11 @@
       "path": "common/buf/io.go",
       "original_sha256": "fbc51503191430f02de7e02b44b5a5b2a652047bffdb3e8eefd324725222adb9",
       "patched_sha256": "e4fd6934807f6257990fa1664785440b275280360eed30fc4cb89ce6a8299adb"
+    },
+    {
+      "path": "transport/pipe/reader.go",
+      "original_sha256": "d540732dfeec6ef7921729dc891dd4b6588419925d9b18ae1d2e817cd757ad99",
+      "patched_sha256": "377e00e1b13bebd6c58d8e6502ff25115142a1fed65041bc20a4566f4ec87451"
     }
   ]
 }

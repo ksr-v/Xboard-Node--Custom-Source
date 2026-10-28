@@ -434,6 +434,9 @@ func buildInbound(nc *model.NodeSpec, users []model.UserSpec, tc kernel.TLSCert)
 		"tag":         nc.Protocol + "-in",
 		"listen":      "::",
 		"listen_port": nc.ServerPort,
+		// Probe the transport rather than treating an idle application as offline.
+		"tcp_keep_alive":          "10s",
+		"tcp_keep_alive_interval": "3s",
 	}
 
 	switch nc.Protocol {

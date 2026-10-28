@@ -33,3 +33,19 @@ go test ./internal/limiter ./internal/kernel/singbox ./internal/kernel/xray ./in
 If these maintained files change, update their `patched_sha256` values in
 `manifest.json` after review. An upstream version change requires a new explicit
 review of the original source and hashes; there is no automatic upstream fetch.
+# Online device lifecycle addition (2026-10-28)
+
+The verified maintained copy also changes `transport/pipe/reader.go`. Its
+optional `SetCloseHandler` observes terminal pipe EOF/closed errors and
+`Interrupt` without replacing the concrete `*pipe.Reader` required by mux and
+reverse. Notifications happen outside the pipe and observer mutexes, and a
+late registration observes a previously recorded terminal state. A temporary
+XUDP `ReturnAnError(io.EOF)` while the underlying pipe is still open does not
+notify the handler. Kernel tracking waits for both the reader terminal event
+and writer closure before completing an asynchronous logical request; the
+parent connection context and explicit forced close remain final cleanup
+paths. Forced per-user close additionally closes the real inbound connection
+and interrupts both link directions. The fixed module cache, historical
+`go.mod` and `go.sum` remain unchanged; the manifest verifies all four original
+and maintained files before preparing a separate private source tree.
+

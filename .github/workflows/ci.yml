@@ -32,7 +32,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.26.8'
           cache: false
 
       - name: Test dependency tooling and installer fixtures
@@ -40,6 +40,7 @@ jobs:
           python3 tools/test_dependencies.py
           python3 tools/test_kernel_patches.py
           python3 tools/test_release_assets.py
+          python3 tools/test_release_metadata.py
           python3 tools/test_installer.py
           python3 tools/test_replacement.py
           python3 tools/test_node_menu.py
@@ -61,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.26.8'
           cache: false
       - name: Enable ARM64 executable smoke tests
         run: sudo apt-get update && sudo apt-get install -y qemu-user
@@ -96,7 +97,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.26.8'
           cache: false
 
       - name: Restore pinned dependency snapshot
@@ -181,19 +182,22 @@ jobs:
           path: dist
       - name: Publish new immutable Release or verify an existing publication
         run: |
+          cp install.sh dist/install.sh
+          (cd dist && sha256sum xboard-node-linux-* xbctl-linux-* install.sh > SHA256SUMS)
+          python3 tools/verify_release_assets.py dist --installer install.sh
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             mkdir published
             for asset in xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 install.sh SHA256SUMS; do
               gh release download "$GITHUB_REF_NAME" --pattern "$asset" --dir published
             done
             python3 tools/verify_release_assets.py published --installer install.sh
+            for asset in xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 install.sh; do
+              cmp "dist/$asset" "published/$asset"
+            done
             echo 'Existing Release assets verified; leaving the publication unchanged.'
             exit 0
           fi
-          cp install.sh dist/install.sh
           cd dist
-          sha256sum xboard-node-linux-* xbctl-linux-* install.sh > SHA256SUMS
-          python3 ../tools/verify_release_assets.py . --installer ../install.sh
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
             --notes-file "../RELEASE-$GITHUB_REF_NAME.md" \
             xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 install.sh SHA256SUMS

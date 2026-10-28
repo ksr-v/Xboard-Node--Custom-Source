@@ -1,7 +1,7 @@
 package xray
 
 import (
-	"sync/atomic"
+	"context"
 	"testing"
 
 	"github.com/cedar2025/xboard-node/internal/model"
@@ -106,20 +106,9 @@ func TestLimitDispatcher_GetConnectionState(t *testing.T) {
 	email2 := userEmail(2)
 	ld.UpdateLimits(map[string]int{email1: 1, email2: 2}, nil, nil)
 
-	ic1 := &ipCounter{}
-	r1 := &atomic.Int64{}
-	r1.Store(1)
-	ic1.ips.Store("1.1.1.1", r1)
-	r2 := &atomic.Int64{}
-	r2.Store(1)
-	ic1.ips.Store("2.2.2.2", r2)
-	ld.unlimitedIPs.Store(email1, ic1)
-
-	ic2 := &ipCounter{}
-	r3 := &atomic.Int64{}
-	r3.Store(1)
-	ic2.ips.Store("3.3.3.3", r3)
-	ld.unlimitedIPs.Store(email2, ic2)
+	ld.checkDeviceLimit(email1, "1.1.1.1", true)
+	ld.checkDeviceLimit(email1, "2.2.2.2", true)
+	ld.checkDeviceLimit(email2, "3.3.3.3", true)
 
 	ld.connCount.Store(5)
 
@@ -158,14 +147,14 @@ func TestLimitDispatcher_ResetConns(t *testing.T) {
 	}
 }
 
-func TestLimitDispatcher_UnlimitedUserFastPath(t *testing.T) {
+func TestLimitDispatcher_UnlimitedUserTracking(t *testing.T) {
 	ld := newTestDispatcher()
 
 	email := userEmail(1)
 	// No device limit set for this user
 	ld.UpdateLimits(map[string]int{email: 1}, nil, nil)
 
-	// Should use fast path (sync.Map), no lock needed
+	// Unlimited and limited users keep the same admission refcounts.
 	for i := 0; i < 100; i++ {
 		ip := "10.0.0." + string(rune('0'+i%10))
 		if ld.checkDeviceLimit(email, ip, true) {
@@ -173,39 +162,34 @@ func TestLimitDispatcher_UnlimitedUserFastPath(t *testing.T) {
 		}
 	}
 
-	// Verify IPs are tracked in unlimitedIPs
-	v, ok := ld.unlimitedIPs.Load(email)
-	if !ok {
-		t.Error("unlimited user should have entry in unlimitedIPs")
-	}
-	ic := v.(*ipCounter)
-	ips := ic.aliveIPs()
-	if len(ips) == 0 {
+	ips, _ := ld.GetConnectionState()
+	if len(ips[1]) == 0 {
 		t.Error("should have tracked some IPs")
 	}
 }
 
-
-func TestLimitDispatcher_TrackLinkPreservesReader(t *testing.T) {
+func TestLimitDispatcher_ActiveLinkPreservesConcreteReader(t *testing.T) {
 	ld := newTestDispatcher()
 	email := userEmail(1)
 	ld.UpdateLimits(map[string]int{email: 1}, map[string]int{email: 1}, nil)
 
 	origReader := nopReader{}
-	origWriter := &closeTrackingWriter{Writer: buf.Discard, onClose: func() {}}
+	origWriter := buf.Discard
 	link := &transport.Link{Reader: origReader, Writer: origWriter}
 
-	ld.trackLink(link, email, "1.1.1.1", true)
+	active, _ := ld.beginLink(context.Background(), email, "1.1.1.1", nil)
+	defer active.close()
+	active.attach(link)
 
 	if link.Reader != origReader {
-		t.Fatal("trackLink must not replace link.Reader")
+		t.Fatal("active tracking must not replace link.Reader")
 	}
 	if link.Writer == origWriter {
-		t.Fatal("trackLink should wrap link.Writer for lifecycle callbacks")
+		t.Fatal("active tracking must observe writer termination")
 	}
 }
 
-func TestLimitDispatcher_CloseTrackingWriterReleasesConn(t *testing.T) {
+func TestLimitDispatcher_ActiveLinkCloseReleasesConn(t *testing.T) {
 	ld := newTestDispatcher()
 	email := userEmail(1)
 	ld.UpdateLimits(map[string]int{email: 1}, map[string]int{email: 1}, nil)
@@ -214,18 +198,13 @@ func TestLimitDispatcher_CloseTrackingWriterReleasesConn(t *testing.T) {
 	}
 
 	link := &transport.Link{Reader: nopReader{}, Writer: buf.Discard}
-	ld.trackLink(link, email, "1.1.1.1", true)
+	active, _ := ld.beginLink(context.Background(), email, "1.1.1.1", nil)
+	active.attach(link)
 
 	if got := ld.connCount.Load(); got != 1 {
 		t.Fatalf("expected connCount=1 after tracking, got %d", got)
 	}
-	cw, ok := link.Writer.(*closeTrackingWriter)
-	if !ok {
-		t.Fatal("expected closeTrackingWriter wrapper")
-	}
-	if err := cw.Close(); err != nil {
-		t.Fatalf("closeTrackingWriter.Close() error = %v", err)
-	}
+	active.close()
 	if got := ld.connCount.Load(); got != 0 {
 		t.Fatalf("expected connCount=0 after close, got %d", got)
 	}

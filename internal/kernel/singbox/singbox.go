@@ -53,7 +53,8 @@ type SingBox struct {
 	// Created fresh on every Start (full restart).
 	// Survives Reload for cumulative accounting. Policy/listener/identity
 	// changes close old flows; limit-only changes preserve them.
-	connTracker *ConnTracker
+	connTracker      *ConnTracker
+	drainingTrackers map[*ConnTracker]struct{}
 
 	// speedLimitFunc resolves a user UUID to a *rate.Limiter.
 	// Set once by SetSpeedLimitFunc and forwarded to every new ConnTracker.
@@ -61,7 +62,8 @@ type SingBox struct {
 
 	// deviceLimitFunc resolves a user UUID to (limit, hasLimit) for gate-keeping.
 	// Set once by SetDeviceLimitFunc and forwarded to every new ConnTracker.
-	deviceLimitFunc func(string) (int, bool)
+	deviceLimitFunc     func(string) (int, bool)
+	deviceAdmissionFunc func(uuid, sourceIP string) (release func(), err error)
 
 	// trackerRegistered prevents duplicate AppendTracker calls on the same
 	// Router instance during Reload. Reset to false on full restart.
@@ -129,6 +131,24 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 		cancel()
 		return fmt.Errorf("create sing-box instance: %w", err)
 	}
+	// Install admission before Start opens any listening socket. Preparing a
+	// candidate must not replace the old instance's accounting on failure.
+	candidateTracker := NewConnTracker(0)
+	candidateTracker.SetUserMap(buildUserMap(users))
+	if s.speedLimitFunc != nil {
+		candidateTracker.SetSpeedLimitFunc(s.speedLimitFunc)
+	}
+	if s.deviceLimitFunc != nil {
+		candidateTracker.SetDeviceLimitFunc(s.deviceLimitFunc)
+	}
+	candidateTracker.SetDeviceAdmissionFunc(s.deviceAdmissionFunc)
+	router := service.FromContext[adapter.Router](ctx)
+	if router == nil {
+		instance.Close()
+		cancel()
+		return fmt.Errorf("sing-box admission router unavailable")
+	}
+	router.AppendTracker(candidateTracker)
 
 	if err := instance.Start(); err != nil {
 		instance.Close()
@@ -146,22 +166,25 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 	s.activeConfig = append([]byte(nil), data...)
 	s.activePolicy, _ = compiledPolicy(cfgMap)
 
-	// Fresh tracker on full restart.
-	s.connTracker = NewConnTracker(0)
-	s.connTracker.SetUserMap(buildUserMap(users))
-	if s.speedLimitFunc != nil {
-		s.connTracker.SetSpeedLimitFunc(s.speedLimitFunc)
-	}
-	if s.deviceLimitFunc != nil {
-		s.connTracker.SetDeviceLimitFunc(s.deviceLimitFunc)
-	}
-
-	s.trackerRegistered = false
-	s.registerTracker(ctx)
+	s.connTracker = candidateTracker
+	s.trackerRegistered = true
 
 	// Recycle old instance in background — drain then close.
 	if oldBox != nil {
-		go recycleOldBox(oldBox, oldCancel, oldCtx, oldTracker)
+		if oldTracker != nil {
+			if s.drainingTrackers == nil {
+				s.drainingTrackers = make(map[*ConnTracker]struct{})
+			}
+			s.drainingTrackers[oldTracker] = struct{}{}
+		}
+		go func() {
+			recycleOldBox(oldBox, oldCancel, oldCtx, oldTracker)
+			if oldTracker != nil {
+				s.mu.Lock()
+				delete(s.drainingTrackers, oldTracker)
+				s.mu.Unlock()
+			}
+		}()
 	}
 
 	nlog.Core().Debug("sing-box started", "users", len(users))
@@ -189,6 +212,9 @@ func recycleOldBox(oldBox *box.Box, oldCancel context.CancelFunc, oldCtx context
 	}
 
 	// Step 3: hard-close everything.
+	if oldTracker != nil {
+		oldTracker.CloseAll()
+	}
 	oldBox.Close()
 	if oldCancel != nil {
 		oldCancel()
@@ -383,6 +409,12 @@ func (s *SingBox) stop() {
 	}
 
 	// Step 3: hard-close everything that is still open.
+	if s.connTracker != nil {
+		s.connTracker.CloseAll()
+	}
+	for tracker := range s.drainingTrackers {
+		tracker.CloseAll()
+	}
 	s.box.Close()
 	s.box = nil
 	if s.cancel != nil {
@@ -424,6 +456,16 @@ func (s *SingBox) SetDeviceLimitFunc(fn func(uuid string) (int, bool)) {
 	s.deviceLimitFunc = fn
 	if s.connTracker != nil {
 		s.connTracker.SetDeviceLimitFunc(fn)
+	}
+}
+
+// SetDeviceAdmissionFunc installs optional panel-backed atomic admission.
+func (s *SingBox) SetDeviceAdmissionFunc(fn func(uuid, sourceIP string) (release func(), err error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deviceAdmissionFunc = fn
+	if s.connTracker != nil {
+		s.connTracker.SetDeviceAdmissionFunc(fn)
 	}
 }
 
@@ -567,12 +609,51 @@ func (s *SingBox) reloadInboundsLocked(users []model.UserSpec) error {
 
 // ─── Observability ──────────────────────────────────────────────────────────
 func (s *SingBox) GetUserTraffic(_ context.Context) (traffic map[int][2]int64, aliveIPs map[int]map[string]bool, connCount int, err error) {
-	ct := s.connTrackerSafe()
-	if ct == nil {
-		return nil, nil, 0, nil
+	s.mu.RLock()
+	ct := s.connTracker
+	draining := make([]*ConnTracker, 0, len(s.drainingTrackers))
+	for tracker := range s.drainingTrackers {
+		draining = append(draining, tracker)
 	}
-	traffic, aliveIPs, connCount = ct.GetUserTraffic()
+	s.mu.RUnlock()
+	if ct != nil {
+		traffic, aliveIPs, connCount = ct.GetUserTraffic()
+	}
+	// Keep the full device snapshot consistent with the release presence
+	// probe while an old kernel drains. Byte counters retain their existing
+	// current-tracker semantics; do not re-add previously reported old bytes.
+	for _, tracker := range draining {
+		_, oldIPs, oldCount := tracker.GetUserTraffic()
+		connCount += oldCount
+		for uid, ips := range oldIPs {
+			if aliveIPs == nil {
+				aliveIPs = make(map[int]map[string]bool)
+			}
+			if aliveIPs[uid] == nil {
+				aliveIPs[uid] = make(map[string]bool)
+			}
+			for ip := range ips {
+				aliveIPs[uid][ip] = true
+			}
+		}
+	}
 	return traffic, aliveIPs, connCount, nil
+}
+
+// HasUserSourceIP is an optional admission-release probe. Callers must run it
+// outside connection-close callbacks because Stop/Reload hold the lifecycle mu.
+func (s *SingBox) HasUserSourceIP(uuid, sourceIP string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.connTracker != nil && s.connTracker.HasUserSourceIP(uuid, sourceIP) {
+		return true
+	}
+	for tracker := range s.drainingTrackers {
+		if tracker.HasUserSourceIP(uuid, sourceIP) {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseConnection force-closes a specific connection by its ID.
@@ -589,11 +670,18 @@ func (s *SingBox) CloseConnection(_ context.Context, connID string) error {
 
 // CloseUserConnections terminates all connections for a user UUID.
 func (s *SingBox) CloseUserConnections(_ context.Context, uuid string) error {
-	ct := s.connTrackerSafe()
-	if ct == nil {
-		return nil
+	s.mu.RLock()
+	var trackers []*ConnTracker
+	if s.connTracker != nil {
+		trackers = append(trackers, s.connTracker)
 	}
-	ct.CloseByUUID(uuid)
+	for tracker := range s.drainingTrackers {
+		trackers = append(trackers, tracker)
+	}
+	s.mu.RUnlock()
+	for _, tracker := range trackers {
+		tracker.CloseByUUID(uuid)
+	}
 	return nil
 }
 
