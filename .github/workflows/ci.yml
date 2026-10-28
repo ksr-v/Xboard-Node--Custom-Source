@@ -197,7 +197,10 @@ jobs:
             echo 'Existing Release assets verified; leaving the publication unchanged.'
             exit 0
           fi
+          cp "UPGRADE-$GITHUB_REF_NAME.zh-CN.md" dist/
+          cp "VERIFICATION-$GITHUB_REF_NAME.json" dist/VERIFICATION.json
           cd dist
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
             --notes-file "../RELEASE-$GITHUB_REF_NAME.md" \
-            xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 install.sh SHA256SUMS
+            xboard-node-linux-amd64 xboard-node-linux-arm64 xbctl-linux-amd64 xbctl-linux-arm64 install.sh SHA256SUMS \
+            "UPGRADE-$GITHUB_REF_NAME.zh-CN.md" VERIFICATION.json

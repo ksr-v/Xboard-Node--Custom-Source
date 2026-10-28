@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "release": "v1.13-orphan.7",
+  "repository": "ksr-v/Xboard-Node--Custom-Source",
+  "source_ref": "refs/tags/v1.13-orphan.7",
+  "record_scope": "Prepublication build and local validation; public download and remote Actions status are recorded separately by the publisher.",
+  "binary_source_commit": "fd5cacf2deba18c047f4ae606bf1259220ee7592",
+  "source_validation": {
+    "canonical_git_archive_sha256": "22cb52cf63a1871a23a1a87bd05347cfd3126812e252716dec70c77984cf4826",
+    "exact_go_module_and_core_files": 141,
+    "differences": 0,
+    "later_installer_pin_and_documentation_commit_changes_go_source": false
+  },
+  "build": {
+    "go": "go1.26.8",
+    "build_time": "2026-10-28T00:00:00Z",
+    "version": "v1.13-orphan.7",
+    "trimpath": true,
+    "buildvcs": false,
+    "cgo_enabled": false,
+    "production_tags": "with_quic,with_utls,with_wireguard,with_acme,with_clash_api",
+    "dependency_snapshot_sha256": "32ba04a05003d9f11cac5959bcfe310f82879eaf52b2b81903b7f43a53dfad5f",
+    "verified_modules": 582,
+    "maintained_core_manifest_sha256": "771e07287d2836f92f5e6fd45709a5502b8c99c24150b6d04afefd637c706635"
+  },
+  "assets": {
+    "xboard-node-linux-amd64": {"bytes": 66928802, "sha256": "8671d3c0d4188b4c735e08896356f50a2439c771ce03d2e4493bba5cadc00b15"},
+    "xboard-node-linux-arm64": {"bytes": 61866146, "sha256": "ad05c88bd5878ec1f1737ff803c05c4e760b24267caafbbd026047805f288da3"},
+    "xbctl-linux-amd64": {"bytes": 7184546, "sha256": "cbafbab75572bd1873d4238f0a4eddf40d1a338071c3d5362b7ec5f58279d46d"},
+    "xbctl-linux-arm64": {"bytes": 6619298, "sha256": "c3655a4a455d94cf1d9418855deb0eb2ecfcf31f0654992c3049916e0ff93ccb"},
+    "install.sh": {"bytes": 57231, "sha256": "c67d96b3144189b2caba4eaa825ace1757171470bad30e6fc9d1285db9d46eec"},
+    "SHA256SUMS": {"bytes": 425, "sha256": "c56a83ec07e7c81dd4481f393c56d3a311b703bcab83d500ce681b0c77068f18"}
+  },
+  "formal_asset_validation": {
+    "amd64_native_version_checks_passed": 2,
+    "arm64_qemu_user_version_checks_passed": 2,
+    "all_reported_version": "v1.13-orphan.7 (built 2026-10-28T00:00:00Z)",
+    "exact_five_asset_manifest_pins_and_elf_architectures": "passed",
+    "installer_bash_syntax": "passed",
+    "different_absolute_source_and_maintained_module_path_amd64_rebuilds_identical": 2,
+    "conflicting_build_time_and_ldflags_cannot_override_formal_metadata": true,
+    "tooling_tests": {
+      "release_metadata": {"passed": 3, "skipped": 0},
+      "dependencies": {"passed": 17, "skipped": 0},
+      "kernel_patches": {"passed": 5, "skipped": 0},
+      "release_assets": {"passed": 5, "skipped": 0},
+      "installer": {"passed": 25, "skipped": 1},
+      "replacement": {"passed": 28, "skipped": 0, "actual_formal_xbctl_generator": true},
+      "node_menu": {"passed": 7, "skipped": 0}
+    },
+    "official_golang_docker_1_26_8_alpine_tag_amd64_arm64_available": true
+  },
+  "prior_candidate_functional_validation": {
+    "version": "v1.13-orphan.6-device-online-fix-retain-fix",
+    "linux_amd64_sha256": "dbd6f17082997cd33659b26374184f2432121495c8ed8cb64609379387974baf",
+    "same_business_source": true,
+    "internal_go_race_test_and_subtest_passed": 489,
+    "failed": 0,
+    "targeted_real_runtime_cases_passed": 9,
+    "targeted_real_runtime_assertions_passed": 31,
+    "scope": "Both kernels: unlimited-to-limited migration, admission, normal disconnect, client blackhole, panel outage and recovery. Older B7 matrix and overlapping suites are not added to these totals."
+  },
+  "not_claimed": [
+    "Public download verification before publication",
+    "Remote Actions completion before the workflow actually runs",
+    "Native ARM64 proxy traffic",
+    "Public production upgrade",
+    "New Docker image runtime",
+    "Commercial clients, IPv6 and long-duration stress coverage",
+    "Physical-device identification behind a shared account and source IP"
+  ]
+}

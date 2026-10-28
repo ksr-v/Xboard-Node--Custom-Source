@@ -1,6 +1,6 @@
 # 使用 node 管理节点
 
-本说明对应 **v1.13-orphan.6** 的 Node、xbctl 和安装器。旧版首次按[固定版本更新教程](UPGRADE-v1.13-orphan.6.zh-CN.md)执行 `upgrade`，配套获得新菜单与配置编辑器；以后直接输入 `node` 选 **1**。不要用新机安装或 `REPLACE` 来完成普通升级。
+本说明对应 **v1.13-orphan.7** 的 Node、xbctl 和安装器。旧版首次按[固定版本更新教程](UPGRADE-v1.13-orphan.7.zh-CN.md)执行 `upgrade`，配套获得新菜单与配置编辑器；以后直接输入 `node` 选 **1**。不要用新机安装或 `REPLACE` 来完成普通升级。
 
 在标准 Linux/systemd 安装的 Bash SSH 终端输入小写 `node`：
 

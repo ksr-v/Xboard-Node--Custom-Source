@@ -7,3 +7,7 @@ Dockerfile text eol=lf
 Makefile text eol=lf
 *.sh text eol=lf
 patches/xray-core/** text eol=lf
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+release-build.json text eol=lf

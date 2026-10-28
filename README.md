@@ -12,17 +12,19 @@ Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 - Deploy modes: node mode, machine mode, standalone mode
 - Multi-instance: single process binding multiple panels / nodes
 
-本发行版新增 [Hysteria2 自动端口转发](HY2_PORT_HOPPING.md)和[完整 node 管理菜单](NODE_MANAGEMENT.zh-CN.md)。配合独立后端 `v2026.10.25.2`，节点按面板配置自动维护 UDP 映射；SSH 输入 `node` 可修改面板地址／Token、查看日志、重启及更新到最新正式版。
+本发行版修复在线 IP 续报、断开清理与跨节点限额，需配合独立后端 `v2026.10.28.1`。继续提供 [Hysteria2 自动端口转发](HY2_PORT_HOPPING.md)和[完整 node 管理菜单](NODE_MANAGEMENT.zh-CN.md)：SSH 输入 `node` 可修改面板地址／Token、查看日志、重启及更新到最新正式版。
 
 ## Install
 
-本发行版本：**v1.13-orphan.6**。已有机器首次按[更新教程](UPGRADE-v1.13-orphan.6.zh-CN.md)配套升级 Node、xbctl 和管理脚本，保留绑定和私有 CA；以后输入 `node` 选 **1** 更新。Hysteria2 自动转发还需配套后端 `v2026.10.25.2`。本版沿用 v5 的限速、路由与失败恢复修复，详见[本版说明与验证范围](RELEASE-v1.13-orphan.6.md)。
+本发行版本：**v1.13-orphan.7**，配套 NodeEndpoint **1.0.10**。已有机器按[更新教程](UPGRADE-v1.13-orphan.7.zh-CN.md)配套升级 Node、xbctl 和管理脚本，保留绑定和私有 CA；以后输入 `node` 选 **1** 更新。先升级配套后端，再逐台更新节点。本版保留 v6 自动转发、管理菜单、限速、路由与失败恢复能力，详见[本版说明与验证范围](RELEASE-v1.13-orphan.7.md)。
+
+在线设备按账号与来源 IP 去重，不是硬件设备数。同账号同 IP 的多个节点连接共用一个 IP 额度，同一 NAT 内的多台设备无法区分。正常断开会尽快释放；完全断网需 TCP 检测，Node 整体失联需租约过期。配套后端与本版协商集中准入后，心跳5秒，连续55秒未收到成功报告 ACK 时主动关闭有限额在线连接；不限额和旧后端保留兼容行为。具体边界见发行说明。
 
 ### NodeEndpoint 独立 IP 自动对接
 
 面板安装或升级 [NodeEndpoint 1.0.9](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/releases/tag/v1.0.9)，完成独立 HTTPS 入口和本机公共 CA 同步后，直接在原生“机器管理”新建机器或复制安装命令，在新的 Node 服务器执行并选择 1 安装。命令使用本项目维护的固定安装源，自动带入通讯 IP/端口、机器身份、公共 CA PEM 与指纹，也无需逐机手工上传 CA。
 
-安装器校验公共 CA 的 SHA-256、用途、自签名和强度，实际预检 HTTPS 身份/主机名；Node 与 xbctl 固定使用本仓库 v1.13-orphan.6 Release，域名和私有 CA 两种模式都在执行前核对 AMD64/ARM64 资产摘要。本版安装器只接受 v1.13-orphan.6，指定历史版本或 latest 会在执行二进制前拒绝；下载镜像和本地文件也必须匹配固定摘要。本版重新构建两个程序，包含自动转发和配置编辑器。依赖需要 curl、wget、ca-certificates、python3、openssl、nftables，缺失时按原安装器流程安装；启用跳跃还需节点具有网络管理权限。
+安装器校验公共 CA 的 SHA-256、用途、自签名和强度，实际预检 HTTPS 身份/主机名；Node 与 xbctl 固定使用本仓库 v1.13-orphan.7 Release，域名和私有 CA 两种模式都在执行前核对 AMD64/ARM64 资产摘要。本版安装器只接受 v1.13-orphan.7，指定历史版本或 latest 会在执行二进制前拒绝；下载镜像和本地文件也必须匹配固定摘要。本版以固定 Go 1.26.8 和元数据重新构建两个程序，包含在线 IP 修复及既有自动转发与配置编辑器。依赖需要 curl、wget、ca-certificates、python3、openssl、nftables，缺失时按原安装器流程安装；启用跳跃还需节点具有网络管理权限。
 
 公共 CA、合并系统根的 bundle、归属摘要写入 /etc/xboard-node/node-endpoint-{ca.pem,trust.pem,trust.json}，Root 0600，服务通过 SSL_CERT_FILE 使用；升级保留，失败恢复，卸载移除活动文件并保留私有恢复备份。已运行实例不会因面板 CA 变化自动更新，CA 轮换仍需安排双信任更新。
 
@@ -35,25 +37,25 @@ Node backend for Xboard. Supports `sing-box` / `xray-core` dual kernels.
 在服务器的 **Bash SSH 终端**执行一条命令：
 
 ```bash
-node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.6/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script"
+node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.7/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script"
 ```
 
 - 选 **1 安装**：填写 node/machine 模式、面板地址、ID、Token 和内核；检测到旧安装时，输入 `REPLACE` 确认后替换本机**全部旧对接**，不再追加绑定。Token 输入不回显。
 - 选 **2 卸载**：输入 `UNINSTALL` 确认后断开本机全部 Node 对接并卸载，保留私有恢复备份。
 - 选 **0 退出**。面板生成的带参数对接指令也会显示此菜单，选择安装时沿用参数中的目标，不重复填写。菜单通过独立终端读取，不占用管道脚本的 stdin；自动化必须显式加 `--yes`。
 
-自动识别 amd64/arm64，默认固定下载本项目 Release **v1.13-orphan.6**。上方脚本和二进制均固定版本；后续小写 `node` 菜单选 **1**，查询本仓库最新正式 Release，完整下载并校验安装器，再使用该脚本固定的二进制版本；不再执行 `dev` 分支脚本。需要审核／离线部署时使用下方本地文件方式。仅适用于本项目标准 Linux/systemd 安装；Docker、自定义服务或不完整安装请先人工确认。
+自动识别 amd64/arm64，默认固定下载本项目 Release **v1.13-orphan.7**。上方脚本和二进制均固定版本；后续小写 `node` 菜单选 **1**，查询本仓库最新正式 Release，完整下载并校验安装器，再使用该脚本固定的二进制版本；不再执行 `dev` 分支脚本。需要审核／离线部署时使用下方本地文件方式。仅适用于本项目标准 Linux/systemd 安装；Docker、自定义服务或不完整安装请先人工确认。
 
 安装替换、升级和重启均可能中断连接。IPv4 自动展示还需启用 FlowScope 2.4.0，和周期流量开关无关。
 
 ### 本机管理命令
 
-[完整 node 管理菜单](NODE_MANAGEMENT.zh-CN.md)提供修改面板地址／Token、查看日志、重启、状态及在线更新。首次从旧版升级需用下方固定 v6 安装器，获得新版菜单、Node 和 xbctl；以后直接输入 `node` 选 **1**。
+[完整 node 管理菜单](NODE_MANAGEMENT.zh-CN.md)提供修改面板地址／Token、查看日志、重启、状态及在线更新。首次从旧版升级需用下方固定 v7 安装器，获得新版菜单、Node 和 xbctl；以后直接输入 `node` 选 **1**。
 
 已有标准安装也可直接使用同一维护入口的 `upgrade` 动作，保留配置和绑定，不进入安装／卸载菜单：
 
 ```bash
-node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.6/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script" -- upgrade
+node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.7/install.sh) && [ -n "$node_script" ] && sudo bash -c "$node_script" -- upgrade
 ```
 
 安装成功后输入小写 `node`（大小写敏感，`Node` / `NODE` 不适用）：
@@ -68,7 +70,7 @@ node_script=$(curl -fsS --proto '=https' --max-time 30 --max-filesize 65536 http
 0) 退出
 ```
 
-非 root 用户会请求 sudo。新版菜单从本项目 latest 正式 Release 完整获取并校验安装器，再升级到该脚本固定的版本，保留当前配置、凭据、实例文件和原健康端口（包括 `0`）；历史 v1.13-orphan.5 菜单仍使用其原来的维护脚本入口，因此首次请执行上方明确的 v6 `upgrade`。重启仅操作 `xboard-node.service`。如果系统已存在 Node.js 或其他程序的 `node` 命令，安装／升级会安全拒绝，不覆盖或遮蔽；需先自行解决命令冲突。
+非 root 用户会请求 sudo。新版菜单从本项目 latest 正式 Release 完整获取并校验安装器，再升级到该脚本固定的版本，保留当前配置、凭据、实例文件和原健康端口（包括 `0`）；历史 v1.13-orphan.5 菜单仍使用其原来的维护脚本入口，因此首次请执行上方明确的 v7 `upgrade`。重启仅操作 `xboard-node.service`。如果系统已存在 Node.js 或其他程序的 `node` 命令，安装／升级会安全拒绝，不覆盖或遮蔽；需先自行解决命令冲突。
 
 ### 旧版检测、覆盖与恢复边界
 
@@ -94,24 +96,24 @@ Use the maintained installer and version-pinned local binaries. Replace the plac
 ```bash
 # Node mode
 sudo bash install.sh --yes --mode node --panel https://panel.example.com --token YOUR_TOKEN \
-  --node-id YOUR_NODE_ID --version v1.13-orphan.6 --binary ./xboard-node-linux-amd64 \
+  --node-id YOUR_NODE_ID --version v1.13-orphan.7 --binary ./xboard-node-linux-amd64 \
   --xbctl-binary ./xbctl-linux-amd64
 
 # Machine mode
 sudo bash install.sh --yes --mode machine --panel https://panel.example.com --token YOUR_TOKEN \
-  --machine-id YOUR_MACHINE_ID --version v1.13-orphan.6 --binary ./xboard-node-linux-amd64 \
+  --machine-id YOUR_MACHINE_ID --version v1.13-orphan.7 --binary ./xboard-node-linux-amd64 \
   --xbctl-binary ./xbctl-linux-amd64
 ```
 
-For arm64, use the matching `*-linux-arm64` binaries. Override the maintained Release base with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; explicit local binary arguments take precedence. Both must match this installer's pinned v1.13-orphan.6 hashes; other release versions are refused. Files in the current directory are never selected implicitly. Upgrading offline uses `sudo bash install.sh upgrade --version v1.13-orphan.6 --binary ./xboard-node-linux-amd64 --xbctl-binary ./xbctl-linux-amd64`. Automated uninstall: `sudo bash install.sh uninstall --yes`.
+For arm64, use the matching `*-linux-arm64` binaries. Override the maintained Release base with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; explicit local binary arguments take precedence. Both must match this installer's pinned v1.13-orphan.7 hashes; other release versions are refused. Files in the current directory are never selected implicitly. Upgrading offline uses `sudo bash install.sh upgrade --version v1.13-orphan.7 --binary ./xboard-node-linux-amd64 --xbctl-binary ./xbctl-linux-amd64`. Automated uninstall: `sudo bash install.sh uninstall --yes`.
 
-本轮候选源码验证：Hysteria2 自动转发 47 项专用 VM 检查、管理菜单 13 项真实 PTY/systemd/Node/面板检查通过；后端新增 12 项校验／下发测试，原限速／路由 13 项回归通过。安装器 26 项中 25 通过、1 项外部镜像路径跳过，新菜单 7 项隔离检查通过，相关 Go 包生产 tags 的 Linux `-race` 通过。日志菜单通过哨兵核对调用范围，未读取 Root 私有运行日志。正式发行字节、架构及公开下载验收记录以同次 `VERIFICATION.json` 为准。公网、原生 ARM64 代理流量、IPv6、商业客户端和长期负载尚未穷尽验证。
+本轮修复候选源码：全 `internal/...` Go race 检查489项 test/subtest通过、0失败；最终修复候选二进制9个真实案例、31项断言通过，包括双内核不限额→限额迁移、正常限额／断开、客户端黑洞及面板失联／恢复。正式 v7 仅更换构建元数据，正式发行字节、四程序架构和版本、安装器回归及公开下载验收另见同次 `VERIFICATION.json`。公网、原生 ARM64 代理流量、IPv6、商业客户端和长期负载尚未穷尽验证。v6 的自动转发和菜单历史验收见 [v6 说明](RELEASE-v1.13-orphan.6.md)，不计入本轮测试总数。
 
 Historical verification (2026-10-09): the original installer suite had 48 checks, with 47 passed and one Windows native-symlink case skipped. v1.13-orphan.4 included trimpath builds and the corrected native-symlink fixture. v1.13-orphan.3 remained an unpublished candidate; historical tags and assets are preserved. The missing dependency-snapshot Release reported by that version was a separate distribution issue; current CI still requires the exact asset pinned in `dependency-snapshot.json`.
 
 ### 发布与脱敏
 
-本项目公开仓库仅发布受 Git 管理的源码；实际 `config.yml`、`.env`、凭据、私钥、测试运行产物及 `.dependency-work` 不进入源码包。发布前对导出的源码树和新增提交执行敏感信息扫描，人工区分测试假值与真实凭据，并检查 Release 附件。固定依赖构建启用 Go `-trimpath`，避免二进制暴露构建机绝对源码路径。扫描是已知模式检查，不是不存在任何敏感信息的绝对保证；详见 [本版发布说明](RELEASE-v1.13-orphan.6.md)。
+本项目公开仓库仅发布受 Git 管理的源码；实际 `config.yml`、`.env`、凭据、私钥、测试运行产物及 `.dependency-work` 不进入源码包。发布前对导出的源码树和新增提交执行敏感信息扫描，人工区分测试假值与真实凭据，并检查 Release 附件。固定依赖构建启用 Go `-trimpath`，避免二进制暴露构建机绝对源码路径。扫描是已知模式检查，不是不存在任何敏感信息的绝对保证；详见 [本版发布说明](RELEASE-v1.13-orphan.7.md)。
 
 ## xbctl
 
@@ -148,6 +150,8 @@ Legacy single-panel config is compatible. Explicit `xbctl bind add-*` still appe
 - [功能验证与未验证范围](DEPENDENCY-TEST-REPORT.md)
 
 Normal Makefile builds require the verified selective Module Proxy snapshot. See the recovery guide for local archive restoration; no dependency proxy service is required on deployed VPS hosts.
+
+Formal v7 builds use Go 1.26.8 and the fixed `release-build.json` metadata, with `-trimpath -buildvcs=false`. `VERSION=v1.13-orphan.7 make build-all` produces the four Linux assets; CI rebuilds and verifies installer pins before publication and compares byte-for-byte when the Release already exists. Git provenance is recorded separately so the later installer-pin commit cannot change the binary bytes.
 
 ## License
 
