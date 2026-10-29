@@ -4,10 +4,12 @@ package inputfirewall_test
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +20,24 @@ import (
 )
 
 var compatTools = []string{"iptables-nft", "ip6tables-nft", "iptables-legacy", "ip6tables-legacy"}
+
+func diagnose(t *testing.T, phase string) {
+	t.Helper()
+	var rows []map[string]any
+	for _, tool := range compatTools {
+		text := command(t, tool+"-save", "-t", "filter")
+		ports := regexp.MustCompile(`--dport ([0-9]+)`).FindAllStringSubmatch(text, -1)
+		var selected []string
+		for _, p := range ports {
+			selected = append(selected, p[1])
+		}
+		rows = append(rows, map[string]any{"tool": tool, "owned_chain_count": strings.Count(text, ":XB_IN_"),
+			"owned_jump_count": strings.Count(text, "-j XB_IN_"), "ports": selected,
+			"owned_rule_count": strings.Count(text, "-A XB_IN_")})
+	}
+	data, _ := json.Marshal(map[string]any{"phase": phase, "backends": rows})
+	t.Log("XB_DIAG " + string(data))
+}
 
 func netnsGuard(t *testing.T) string {
 	t.Helper()
@@ -107,7 +127,8 @@ func filteredSave(t *testing.T, tool string) string {
 		}
 		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n")
+	// Traffic changes chain counters even when the rule body is untouched.
+	return regexp.MustCompile(`\[[0-9]+:[0-9]+\]`).ReplaceAllString(strings.Join(lines, "\n"), "[0:0]")
 }
 
 // This suite runs only in tools/test_inputfirewall_netns.py's fresh namespaces.
@@ -167,6 +188,7 @@ func TestManagedInputNetwork(t *testing.T) {
 		}
 	})
 	t.Run("idempotent_and_multiple_owners", func(t *testing.T) {
+		defer sibling.Close()
 		if err := sibling.Update(config(17444, "")); err != nil {
 			t.Fatal(err)
 		}
@@ -191,9 +213,10 @@ func TestManagedInputNetwork(t *testing.T) {
 						out = append(out, line)
 					}
 				}
-				return strings.Join(out, "\n")
+				return regexp.MustCompile(`\[[0-9]+:[0-9]+\]`).ReplaceAllString(strings.Join(out, "\n"), "[0:0]")
 			}
 			if clean(command(t, tool+"-save", "-t", "filter")) != clean(before[tool]) {
+				diagnose(t, "idempotence")
 				t.Fatal("reconciliation changed an already correct ruleset")
 			}
 		}
@@ -222,7 +245,10 @@ func TestManagedInputNetwork(t *testing.T) {
 		if err := m.Update(config(17444, "10.253.30.1")); err != nil {
 			t.Fatal(err)
 		}
-		if !probe(t, client, 4, 17444, 17444) || probe(t, client, 4, 17443, 17443) || probe(t, client, 6, 17444, 17444) {
+		new4, old4, new6 := probe(t, client, 4, 17444, 17444), probe(t, client, 4, 17443, 17443), probe(t, client, 6, 17444, 17444)
+		if !new4 || old4 || new6 {
+			diagnose(t, "port_address_change")
+			t.Logf("XB_PROBE new4=%t old4=%t new6=%t", new4, old4, new6)
 			t.Fatal("old port or unselected address family remained open")
 		}
 	})
@@ -288,6 +314,7 @@ func TestManagedInputNetwork(t *testing.T) {
 				t.Fatal("foreign filter rules or default policies changed")
 			}
 			if strings.Contains(command(t, tool+"-save", "-t", "filter"), "XB_IN_") {
+				diagnose(t, "close")
 				t.Fatal("owned grant survived cleanup")
 			}
 		}

@@ -145,6 +145,7 @@ class RecoveryToolsTest(unittest.TestCase):
         build_policy = dict(d.policy(), public_proxy='https://proxy.example.com')
         with mock.patch.object(d, 'policy', return_value=build_policy), \
                 mock.patch.object(d, 'run', return_value='fixture-commit') as execute, \
+                mock.patch.dict('os.environ', {'VERSION': 'fixture-development'}), \
                 mock.patch('kernel_patches.prepare', return_value='-mod=readonly -overlay=fixture.json'):
             for arch in ('amd64', 'arm64'):
                 d.build(self.snapshot, arch)

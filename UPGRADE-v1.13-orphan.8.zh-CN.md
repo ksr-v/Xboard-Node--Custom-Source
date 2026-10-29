@@ -50,4 +50,4 @@ sudo systemctl status xboard-node --no-pager
 
 ## 本版验收状态
 
-Linux/netns、升级/回滚、最终 AMD64/ARM64 资产及公开下载：**待本轮结果填写**。详见 [v8 发行说明](RELEASE-v1.13-orphan.8.md)和同版 `VERIFICATION.json`；历史 v6/v7 结果不作为本版功能或正式字节验收。
+本版 Linux 单元599项、INPUT/NAT race129项、私有 netns 真实 UDP 9场景通过；构建/安装升级等 Python 夹具94通过、1个可选副本检查跳过。四个程序已按固定 Go 1.26.8 构建，AMD64 在 Windows/Linux 逐字节复现；ARM64 为交叉构建。公开下载结果见同版 `VERIFICATION.json`，测试边界见 [v8 发行说明](RELEASE-v1.13-orphan.8.md)；历史 v6/v7 结果不作为本版功能或正式字节验收。

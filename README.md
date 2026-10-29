@@ -107,7 +107,7 @@ sudo bash install.sh --yes --mode machine --panel https://panel.example.com --to
 
 For arm64, use the matching `*-linux-arm64` binaries. Override the maintained Release base with `--download-base` or `XBOARD_NODE_DOWNLOAD_BASE`; explicit local binary arguments take precedence. Both must match this installer's pinned v1.13-orphan.8 hashes; other release versions are refused. Files in the current directory are never selected implicitly. Upgrading offline uses `sudo bash install.sh upgrade --version v1.13-orphan.8 --binary ./xboard-node-linux-amd64 --xbctl-binary ./xbctl-linux-amd64`. Automated uninstall: `sudo bash install.sh uninstall --yes`.
 
-历史验证（2026-10-28，v7）：修复候选全 `internal/...` Go race 检查489项 test/subtest通过，最终候选二进制9个真实案例、31项断言通过；正式 v7 资产验收见该版 `VERIFICATION.json`。v6 自动转发和菜单历史验收见 [v6 说明](RELEASE-v1.13-orphan.6.md)。这些数量不计入 v8 测试总数。v8 Linux/netns、最终资产和公开下载验收结果尚待填写，以[本版发行说明](RELEASE-v1.13-orphan.8.md)和正式 `VERIFICATION.json` 为准。
+本版 Linux 单元599项、INPUT/NAT race129项、私有 netns 真实 UDP 9场景通过；Python 构建/安装升级夹具94通过、1个可选副本检查跳过。四程序固定 Go 1.26.8 构建，AMD64 Windows/Linux 逐字节相同；ARM64 为交叉构建。范围和公开下载结果见[本版发行说明](RELEASE-v1.13-orphan.8.md)与同版 `VERIFICATION.json`。历史 v7 在线 IP 验证见 [v7 说明](RELEASE-v1.13-orphan.7.md)，v6 转发和菜单见 [v6 说明](RELEASE-v1.13-orphan.6.md)，历史数量不计入本版。
 
 Historical verification (2026-10-09): the original installer suite had 48 checks, with 47 passed and one Windows native-symlink case skipped. v1.13-orphan.4 included trimpath builds and the corrected native-symlink fixture. v1.13-orphan.3 remained an unpublished candidate; historical tags and assets are preserved. The missing dependency-snapshot Release reported by that version was a separate distribution issue; current CI still requires the exact asset pinned in `dependency-snapshot.json`.
 

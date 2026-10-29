@@ -1031,10 +1031,10 @@ verify_endpoint_binary() {
     }
     local expected
     case "$1:$ARCH" in
-        node:amd64) expected=8671d3c0d4188b4c735e08896356f50a2439c771ce03d2e4493bba5cadc00b15 ;;
-        node:arm64) expected=ad05c88bd5878ec1f1737ff803c05c4e760b24267caafbbd026047805f288da3 ;;
-        xbctl:amd64) expected=cbafbab75572bd1873d4238f0a4eddf40d1a338071c3d5362b7ec5f58279d46d ;;
-        xbctl:arm64) expected=c3655a4a455d94cf1d9418855deb0eb2ecfcf31f0654992c3049916e0ff93ccb ;;
+        node:amd64) expected=4dec79087ade152a55a98aa91bd64459f4569cab832ae39ee40e30e43389ce60 ;;
+        node:arm64) expected=52c33e1088d8a9b00b112d1478d4a49738a04942a8d95102719c551826fc26c5 ;;
+        xbctl:amd64) expected=1351a518ffb20993d009e8b1b9b95ceba3e7d104a037939d53d03698dd2ab32c ;;
+        xbctl:arm64) expected=14c2f8c994936c99c672500ccf79ad2f06db31fe2024e49c9aed12de1f0d153d ;;
         *) log_error 'Unsupported pinned Node asset'; return 1 ;;
     esac
     if ! printf '%s  %s\n' "$expected" "$2" | sha256sum -c - >/dev/null; then

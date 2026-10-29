@@ -57,6 +57,7 @@ def inside(args):
                       passed=passed, failed=failed, exit_code=result.returncode)
         # This log contains only this synthetic test and public source errors.
         Path(args.binary + '.netns.log').write_text(result.stdout + result.stderr)
+        Path(args.binary + '.netns.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(report), flush=True)
         return result.returncode
     finally:
