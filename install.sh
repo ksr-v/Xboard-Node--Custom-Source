@@ -31,12 +31,12 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.7}"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.8}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
 DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/dev}"
-INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.7"
+INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.8"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -53,6 +53,8 @@ RELEASE_VERSION="${DEFAULT_RELEASE_VERSION}"
 HEALTH_PORT="${DEFAULT_HEALTH_PORT}"
 HEALTH_ENABLED=1
 HEALTH_PORT_SET=0
+MANAGED_INPUT=1
+MANAGED_INPUT_SET=0
 INTERACTIVE=0
 RUNTIME_GOMEMLIMIT=""
 RUNTIME_GOGC=""
@@ -109,6 +111,21 @@ load_health_port_from_config() {
     HEALTH_PORT="$parsed"
     HEALTH_ENABLED=1
     if [ "$HEALTH_PORT" -eq 0 ]; then HEALTH_ENABLED=0; fi
+}
+
+load_managed_input_policy() {
+    [ "$MANAGED_INPUT_SET" -eq 0 ] || return 0
+    # Old standard units had no setting. Preserve an explicit local opt-out
+    # across upgrades; never source an environment file or evaluate unit text.
+    if [ -f "$SERVICE_PATH" ]; then
+        local values
+        values=$(awk '/^Environment=XBOARD_NODE_MANAGED_INPUT=/ { sub(/^Environment=XBOARD_NODE_MANAGED_INPUT=/, ""); print }' "$SERVICE_PATH")
+        case "$values" in
+            ""|1) MANAGED_INPUT=1 ;;
+            0) MANAGED_INPUT=0 ;;
+            *) log_error 'Managed INPUT unit policy is ambiguous; review it before upgrading'; return 1 ;;
+        esac
+    fi
 }
 
 restore_backup_file() {
@@ -249,11 +266,12 @@ usage() {
     --kernel, -k        singbox or xray (default: singbox)
     --endpoint-ca-base64       Panel-generated public CA bundle (no private key)
     --endpoint-ca-fingerprint  Independently delivered SHA-256 root pins
-    --version           Fixed release version (this installer verifies v1.13-orphan.7 only)
+    --version           Fixed release version (this installer verifies v1.13-orphan.8 only)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
     --health-port       Local health port (default: 65530, use 0 to disable)
+    --skip-firewall     Disable automatic managed Hysteria2 UDP INPUT rules
     --gomemlimit        Runtime GOMEMLIMIT value, e.g. 256MiB
     --gogc              Runtime GOGC value, e.g. 50
     --force-reconfigure Overwrite an existing install even if mode/target changed
@@ -479,7 +497,11 @@ verify_managed_service() {
     }
     while IFS= read -r line; do
         case "$line" in
-            Environment=*) [ "$line" = "Environment=SSL_CERT_FILE=$ENDPOINT_TRUST_PATH" ] || { log_error 'Custom service environment requires manual review'; return 1; } ;;
+            Environment=*)
+                case "$line" in
+                    "Environment=SSL_CERT_FILE=$ENDPOINT_TRUST_PATH"|Environment=XBOARD_NODE_MANAGED_INPUT=0|Environment=XBOARD_NODE_MANAGED_INPUT=1) ;;
+                    *) log_error 'Custom service environment requires manual review'; return 1 ;;
+                esac ;;
             PassEnvironment=*|UnsetEnvironment=*|ExecStartPre=*|ExecStartPost=*|ExecCondition=*) log_error 'Custom service execution/environment requires manual review'; return 1 ;;
         esac
     done < "$SERVICE_PATH"
@@ -612,6 +634,11 @@ parse_args() {
                 HEALTH_PORT_SET=1
                 shift 2
                 ;;
+            --skip-firewall)
+                MANAGED_INPUT=0
+                MANAGED_INPUT_SET=1
+                shift
+                ;;
             --gomemlimit)
                 RUNTIME_GOMEMLIMIT="$2"
                 shift 2
@@ -734,17 +761,17 @@ install_dependencies() {
     case "$OS" in
         ubuntu|debian)
             DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get update -qq
-            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates python3 openssl nftables iptables >/dev/null 2>&1
             ;;
         centos|rhel|rocky|almalinux|fedora)
             if command -v dnf >/dev/null 2>&1; then
-                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
+                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates python3 openssl nftables iptables >/dev/null 2>&1
             else
-                run_with_retry 5 3 yum install -y -q curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
+                run_with_retry 5 3 yum install -y -q curl wget ca-certificates python3 openssl nftables iptables >/dev/null 2>&1
             fi
             ;;
         alpine)
-            run_with_retry 5 3 apk add --no-cache curl wget ca-certificates python3 openssl nftables >/dev/null 2>&1
+            run_with_retry 5 3 apk add --no-cache curl wget ca-certificates python3 openssl nftables iptables >/dev/null 2>&1
             ;;
         *)
             log_warn "OS ${OS} is not in the official support set; continuing best-effort"
@@ -763,9 +790,25 @@ ensure_nft_cli() {
     fi
 }
 
+ensure_input_cli() {
+    [ "$MANAGED_INPUT" -eq 1 ] || return 0
+    local tool
+    for tool in iptables ip6tables; do
+        if ! command -v "$tool" >/dev/null 2>&1 || ! "$tool" --version >/dev/null 2>&1; then
+            log_error 'Managed UDP INPUT requires working iptables/ip6tables; install the iptables package or use --skip-firewall. Existing Node files/service have not been replaced.'
+            return 1
+        fi
+    done
+}
+
 show_port_hopping_note() {
     log_info 'Hysteria2: Node automatically manages UDP forwarding when the panel supplies a port-hopping range.'
-    log_info 'Permit the advertised UDP range at the cloud/network edge and the primary UDP listener in host INPUT; redirect changes the destination port. Existing firewall acceptance policies are unchanged.'
+    if [ "$MANAGED_INPUT" -eq 1 ]; then
+        log_info 'Managed INPUT is enabled for the actual Hysteria2 UDP listener on supported iptables backends; local firewall.managed_input: false disables it. Rules are checked every 30 seconds.'
+    else
+        log_info 'Managed INPUT is disabled; permit the primary UDP listener in your host firewall. Redirect changes the destination port.'
+    fi
+    log_info 'Permit the advertised UDP range at the cloud/network edge. Additional native nftables INPUT/firewalld policies require administrator-managed rules.'
 }
 
 ensure_dirs() {
@@ -975,15 +1018,15 @@ stage_endpoint_trust() {
         ENDPOINT_TRUST=1
     fi
     if [ "$ENDPOINT_TRUST" -eq 1 ]; then
-        [ "$RELEASE_VERSION" = v1.13-orphan.7 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.7'; return 1; }
+        [ "$RELEASE_VERSION" = v1.13-orphan.8 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.8'; return 1; }
     fi
 }
 
 verify_endpoint_binary() {
     # Pin executable bytes for both domain and private-CA installations. Changing
     # the CA mode must never disable the release's binary integrity check.
-    [ "$RELEASE_VERSION" = v1.13-orphan.7 ] || {
-        log_error 'This installer can only verify v1.13-orphan.7 assets; use the matching audited installer for another release'
+    [ "$RELEASE_VERSION" = v1.13-orphan.8 ] || {
+        log_error 'This installer can only verify v1.13-orphan.8 assets; use the matching audited installer for another release'
         return 1
     }
     local expected
@@ -1126,6 +1169,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=${INSTALL_ROOT}
 EnvironmentFile=-${CREDENTIALS_FILE}
+Environment=XBOARD_NODE_MANAGED_INPUT=${MANAGED_INPUT}
 ExecStart=${BINARY_PATH} -c ${CONFIG_FILE}
 Restart=always
 RestartSec=5
@@ -1278,8 +1322,10 @@ perform_install() {
     if [ -x "$BINARY_PATH" ]; then
         log_info 'Existing Node detected; migrating to the current single-target configuration'
     fi
+    load_managed_input_policy || return 1
     install_dependencies
     ensure_nft_cli || return 1
+    ensure_input_cli || return 1
     TMP_DIR=$(mktemp -d)
     ensure_dirs
     stage_endpoint_trust
@@ -1325,8 +1371,10 @@ perform_upgrade() {
     fi
     HEALTH_ENABLED=1
     if [ "$HEALTH_PORT" -eq 0 ]; then HEALTH_ENABLED=0; fi
+    load_managed_input_policy || return 1
     install_dependencies
     ensure_nft_cli || return 1
+    ensure_input_cli || return 1
     TMP_DIR=$(mktemp -d)
     ensure_dirs
     stage_endpoint_trust

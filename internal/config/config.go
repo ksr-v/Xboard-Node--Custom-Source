@@ -27,6 +27,8 @@ type Config struct {
 	Log        LogConfig     `yaml:"log"`
 	Runtime    RuntimeConfig `yaml:"runtime"`
 	WS         WSConfig      `yaml:"ws"`
+	// Firewall is local policy only; panel snapshots cannot grant this privilege.
+	Firewall FirewallConfig `yaml:"firewall,omitempty"`
 	// Standalone enables a local-only node that never contacts the panel.
 	Standalone *StandaloneConfig `yaml:"standalone,omitempty"`
 	// HealthPort enables a lightweight HTTP health-check endpoint on the
@@ -42,6 +44,17 @@ type Config struct {
 	// via GET /api/v2/server/machine/nodes. When set, Panel.NodeID, Nodes
 	// and Panel.Token are ignored; the machine token is used instead.
 	Machine *MachineConfig `yaml:"machine,omitempty"`
+}
+
+type FirewallConfig struct {
+	// ManagedInput may opt out of the permission granted by the standard unit.
+	// A true value alone never enables host firewall changes in a custom unit.
+	ManagedInput *bool `yaml:"managed_input,omitempty"`
+}
+
+func (c *Config) ManagedInputEnabled() bool {
+	return os.Getenv("XBOARD_NODE_MANAGED_INPUT") == "1" &&
+		(c.Firewall.ManagedInput == nil || *c.Firewall.ManagedInput)
 }
 
 // MachineConfig identifies this process as a panel-managed machine that
@@ -453,6 +466,9 @@ func (c *Config) resolveEnvRefs() {
 // Fields that must be unique per instance (config_dir, cert_dir, instance_id)
 // are intentionally excluded.
 func (c *Config) inheritFrom(parent *Config) {
+	if c.Firewall.ManagedInput == nil {
+		c.Firewall.ManagedInput = parent.Firewall.ManagedInput
+	}
 	// Log
 	if c.Log.Level == "" {
 		c.Log.Level = parent.Log.Level

@@ -51,6 +51,13 @@ jobs:
       - name: Run tests
         run: make dependency-verify test
 
+      - name: Test actual UDP traffic in private network and mount namespaces
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq iptables nftables iproute2
+          go test -c -tags netns -o .dependency-work/inputfirewall-netns.test ./internal/inputfirewall
+          sudo python3 tools/test_inputfirewall_netns.py --binary "$PWD/.dependency-work/inputfirewall-netns.test"
+
       - name: Damage a real C-risk module in a disposable copy
         run: python3 tools/corruption_test.py
 

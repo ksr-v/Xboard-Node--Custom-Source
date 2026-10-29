@@ -18,6 +18,7 @@ import (
 	"github.com/cedar2025/xboard-node/internal/cert/dnsproviders"
 	"github.com/cedar2025/xboard-node/internal/config"
 	"github.com/cedar2025/xboard-node/internal/controlplane"
+	"github.com/cedar2025/xboard-node/internal/inputfirewall"
 	"github.com/cedar2025/xboard-node/internal/kernel"
 	"github.com/cedar2025/xboard-node/internal/kernel/singbox"
 	"github.com/cedar2025/xboard-node/internal/kernel/xray"
@@ -30,15 +31,19 @@ import (
 )
 
 type Service struct {
-	cfg          *config.Config
-	source       controlplane.Source
-	sink         controlplane.Sink
-	kernel       kernel.Kernel
-	tracker      *tracker.Tracker
-	limiter      *limiter.Limiter
-	speedTracker *limiter.SpeedTracker
-	cert         *cert.Manager
-	portForward  portForwarder
+	cfg           *config.Config
+	source        controlplane.Source
+	sink          controlplane.Sink
+	kernel        kernel.Kernel
+	tracker       *tracker.Tracker
+	limiter       *limiter.Limiter
+	speedTracker  *limiter.SpeedTracker
+	cert          *cert.Manager
+	portForward   portForwarder
+	inputFirewall portForwarder
+	// A temporary privileged-rule failure at startup must remain retryable,
+	// including in machine mode where the Service is already registered.
+	networkRetryPending bool
 
 	lastConfig *model.NodeSpec
 	lastUsers  []model.UserSpec
@@ -160,27 +165,33 @@ func newService(cfg *config.Config, cp controlplane.ControlPlane) *Service {
 
 	l := limiter.New()
 	st := limiter.NewSpeedTracker(l)
+	owner := fmt.Sprintf("%s|node:%d|%s", cfg.InstanceID, cfg.Panel.NodeID, cfg.Kernel.ConfigDir)
+	var input portForwarder
+	if cfg.ManagedInputEnabled() {
+		input = inputfirewall.New(owner)
+	}
 
 	return &Service{
-		cfg:          cfg,
-		source:       cp,
-		sink:         cp,
-		kernel:       k,
-		tracker:      tracker.New(),
-		limiter:      l,
-		speedTracker: st,
-		cert:         certMgr,
-		portForward:  portforward.New(fmt.Sprintf("%s|node:%d|%s", cfg.InstanceID, cfg.Panel.NodeID, cfg.Kernel.ConfigDir)),
-		wsEvents:     make(chan controlplane.Event, 16),
-		wsStatusCh:   make(chan controlplane.StatusChange, 4),
-		pullResults:  make(chan pullResult, 1),
+		cfg:           cfg,
+		source:        cp,
+		sink:          cp,
+		kernel:        k,
+		tracker:       tracker.New(),
+		limiter:       l,
+		speedTracker:  st,
+		cert:          certMgr,
+		portForward:   portforward.New(owner),
+		inputFirewall: input,
+		wsEvents:      make(chan controlplane.Event, 16),
+		wsStatusCh:    make(chan controlplane.StatusChange, 4),
+		pullResults:   make(chan pullResult, 1),
 	}
 }
 
 func (s *Service) Run(ctx context.Context) error {
 	// Also runs after failed startup. Only this service's managed UDP rules
 	// are removed; other node services and host firewall policies are untouched.
-	defer s.closePortForward()
+	defer s.closeNetworkRules()
 	// Start cert manager (handles auto-TLS or manual cert verification)
 	if err := s.cert.Start(ctx); err != nil {
 		return fmt.Errorf("cert manager: %w", err)
@@ -206,12 +217,16 @@ func (s *Service) Run(ctx context.Context) error {
 	// if WS has been enabled. When WS is disconnected for too long, re-check
 	// if it's still available.
 	wsDiscoveryTicker := time.NewTicker(time.Duration(s.cfg.WS.DiscoveryInterval) * time.Second)
+	// Independent of polling/WS connectivity. Firewall reloads and accidental
+	// rule removal must be repaired even when the panel configuration is unchanged.
+	networkTicker := time.NewTicker(30 * time.Second)
 
 	defer trackTicker.Stop()
 	defer reportTicker.Stop()
 	defer pullTicker.Stop()
 	defer deviceReportTicker.Stop()
 	defer wsDiscoveryTicker.Stop()
+	defer networkTicker.Stop()
 
 	s.startWSClient(ctx)
 
@@ -223,6 +238,9 @@ func (s *Service) Run(ctx context.Context) error {
 
 		case <-trackTicker.C:
 			s.trackAndEnforce(ctx)
+
+		case <-networkTicker.C:
+			s.reconcileNetworkRules(ctx)
 
 		case <-reportTicker.C:
 			s.pushReportAsync()
@@ -330,8 +348,9 @@ func (s *Service) initialSetup(ctx context.Context) error {
 	)
 
 	if len(bootstrap.Users) == 0 {
-		if err := s.updatePortForward(nil); err != nil {
-			return fmt.Errorf("cleanup inactive UDP forwarding: %w", err)
+		if err := s.updateNetworkRules(nil); err != nil {
+			s.lastConfigHash = computeConfigHash(nil)
+			nlog.Core().Warn("inactive UDP network cleanup pending; automatic retry remains enabled", "error", err)
 		}
 		nlog.Core().Warn("no users, kernel will not start until users are available")
 		s.markMailboxReadyAndDrain(ctx)
@@ -340,7 +359,10 @@ func (s *Service) initialSetup(ctx context.Context) error {
 
 	s.applyRemoteOverrides(ctx, bootstrap.Config)
 	if !s.startKernel(bootstrap.Config, bootstrap.Users) {
-		return fmt.Errorf("start kernel")
+		if !s.networkRetryPending {
+			return fmt.Errorf("start kernel")
+		}
+		nlog.Core().Warn("initial UDP network rules unavailable; retaining desired configuration for automatic retry")
 	}
 	s.markMailboxReadyAndDrain(ctx)
 	return nil
@@ -761,14 +783,16 @@ func (s *Service) restoreUserState(users []model.UserSpec, hash string) {
 // startKernel starts (or restarts) the kernel with the given config/users and
 // records the successfully applied state. Returns false on error.
 func (s *Service) startKernel(nc *model.NodeSpec, users []model.UserSpec) bool {
-	if err := s.updatePortForward(nc); err != nil {
-		nlog.Core().Error("automatic Hysteria2 UDP forwarding failed; check nftables, CAP_NET_ADMIN and rule conflicts", "error", err)
+	s.networkRetryPending = false
+	if err := s.updateNetworkRules(nc); err != nil {
+		s.networkRetryPending = true
+		nlog.Core().Error("automatic Hysteria2 UDP network setup failed; check iptables/nftables, CAP_NET_ADMIN and rule conflicts", "error", err)
 		s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 		return false
 	}
 	if err := s.kernel.Start(nc, users, s.cert.TLSCert()); err != nil {
 		nlog.Core().Error("failed to start kernel", "error", err)
-		s.restorePortForward()
+		s.restoreNetworkRules()
 		s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 		return false
 	}
@@ -834,6 +858,7 @@ func (s *Service) applyUserUpdate(ctx context.Context, users []model.UserSpec, n
 	if s.nodeLog != nil && (added > 0 || removed > 0) {
 		s.nodeLog.Info(fmt.Sprintf("users updated: +%d -%d", added, removed))
 	}
+	s.reconcileActiveNetworkRules()
 }
 
 // applyUserDelta applies an incremental user change (add or remove) directly
@@ -877,6 +902,7 @@ func (s *Service) applyUserDelta(ctx context.Context, action string, deltaUsers 
 		if s.nodeLog != nil && added > 0 {
 			s.nodeLog.Info(fmt.Sprintf("users added: +%d", added))
 		}
+		s.reconcileActiveNetworkRules()
 
 	case "remove":
 		// Defensive check for empty or nil deltaUsers
@@ -902,6 +928,7 @@ func (s *Service) applyUserDelta(ctx context.Context, action string, deltaUsers 
 		if s.nodeLog != nil && removed > 0 {
 			s.nodeLog.Info(fmt.Sprintf("users removed: -%d", removed))
 		}
+		s.reconcileActiveNetworkRules()
 
 	default:
 		nlog.Core().Warn(fmt.Sprintf("unknown user delta action: %s", action))
@@ -965,8 +992,8 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 		if len(s.lastUsers) == 0 {
 			s.kernel.Stop()
 			s.appliedState.Users = nil
-			if err := s.updatePortForward(nil); err != nil {
-				nlog.Core().Error("failed to remove inactive Hysteria2 UDP forwarding", "error", err)
+			if err := s.updateNetworkRules(nil); err != nil {
+				nlog.Core().Error("failed to remove inactive Hysteria2 UDP network rules", "error", err)
 			}
 		}
 		return
@@ -975,13 +1002,13 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 	// If config changed, delegate to kernel.Reload. The kernel implementation
 	// decides whether to hot-swap users, reconstruct inbounds, or restart itself.
 	if configChanged && s.kernel.IsRunning() {
-		if err := s.updatePortForward(s.lastConfig); err != nil {
-			nlog.Core().Error("automatic Hysteria2 UDP forwarding update rejected; retaining current kernel", "error", err)
+		if err := s.updateNetworkRules(s.lastConfig); err != nil {
+			nlog.Core().Error("automatic Hysteria2 UDP network update rejected; retaining current kernel", "error", err)
 			s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 			return
 		}
 		if err := s.kernel.Reload(s.lastConfig, s.lastUsers, s.cert.TLSCert()); err != nil {
-			s.restorePortForward()
+			s.restoreNetworkRules()
 			nlog.Core().Warn(fmt.Sprintf("reload failed; previous working configuration retained when available: %v", err))
 			s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 			// The kernel may have already restored its previous configuration.
@@ -1009,10 +1036,61 @@ func (s *Service) updatePortForward(nc *model.NodeSpec) error {
 	return s.portForward.Update(nc)
 }
 
-func (s *Service) restorePortForward() {
-	if err := s.updatePortForward(s.appliedState.Config); err != nil {
-		nlog.Core().Error("failed to restore previous Hysteria2 UDP forwarding; configuration remains unaccepted", "error", err)
+// updateNetworkRules coordinates the two independently owned rule managers.
+// Each manager compensates its own partial backend updates. If INPUT fails
+// after NAT succeeded, both are restored to the running, accepted snapshot.
+func (s *Service) updateNetworkRules(nc *model.NodeSpec) error {
+	if err := s.updatePortForward(nc); err != nil {
+		return err
 	}
+	if s.inputFirewall != nil {
+		if err := s.inputFirewall.Update(nc); err != nil {
+			s.restoreNetworkRules()
+			return fmt.Errorf("managed Hysteria2 UDP INPUT: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) activeNetworkConfig() *model.NodeSpec {
+	if s.kernel.IsRunning() && len(s.lastUsers) > 0 {
+		return s.appliedState.Config
+	}
+	return nil
+}
+
+func (s *Service) restoreNetworkRules() {
+	previous := s.activeNetworkConfig()
+	if err := s.updatePortForward(previous); err != nil {
+		nlog.Core().Error("failed to restore accepted UDP forwarding", "error", err)
+	}
+	if s.inputFirewall != nil {
+		if err := s.inputFirewall.Update(previous); err != nil {
+			nlog.Core().Error("failed to restore accepted UDP INPUT; automatic retry remains enabled", "error", err)
+		}
+	}
+}
+
+func (s *Service) reconcileActiveNetworkRules() {
+	if err := s.updateNetworkRules(s.activeNetworkConfig()); err != nil {
+		nlog.Core().Warn("UDP network rule reconciliation pending", "error", err)
+	}
+}
+
+// Called only on the service's main loop: no background rule writer can race
+// a config rollback or re-create rules after shutdown cleanup.
+func (s *Service) reconcileNetworkRules(ctx context.Context) {
+	s.retryPendingConfig(ctx)
+	s.reconcileActiveNetworkRules()
+}
+
+func (s *Service) closeNetworkRules() {
+	if s.inputFirewall != nil {
+		if err := s.inputFirewall.Close(); err != nil {
+			nlog.Core().Error("failed to clean up owned UDP INPUT", "error", err)
+		}
+	}
+	s.closePortForward()
 }
 
 func (s *Service) closePortForward() {

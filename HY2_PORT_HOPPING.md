@@ -1,12 +1,10 @@
-# Hysteria2 自动端口跳跃
+# Hysteria2 端口跳跃与 UDP INPUT 自动管理
 
-面板给出端口范围后，包含此功能的 Node 在启动节点时自动建立 UDP 转发，范围变更时替换自己的规则，禁用或正常停止节点时删除自己的规则。sing-box 与 Xray 内核仍只监听实际 `server_port`；客户端使用范围内的 UDP 端口连接同一个 Hysteria2 服务。
+Node **v1.13-orphan.8** 保留端口跳跃 NAT，并增加实际 HY2 UDP 监听端口的 INPUT 管理。标准安装默认启用 INPUT 管理；本地管理员可以关闭。只更新面板插件不会更新已部署的 Node，已有机器按 [v8 更新教程](UPGRADE-v1.13-orphan.8.zh-CN.md)执行 `upgrade`。
 
-配套版本为 **Node v1.13-orphan.6 + 独立 Xboard 后端 v2026.10.25.2**，后端内置 NodeEndpoint 1.0.9，使新机器复制的命令使用 v6。既有 v5 发行资产没有自动转发功能；只更新插件 ZIP 不会增加它。已有节点先按[更新教程](UPGRADE-v1.13-orphan.6.zh-CN.md)完成首次 `upgrade`，以后可用 `node` 选 **1** 更新。
+## 配置与数据路径
 
-## 配置约定
-
-Hysteria2 节点 API 新增可选字段：
+面板节点配置示例：
 
 ```json
 {
@@ -18,38 +16,61 @@ Hysteria2 节点 API 新增可选字段：
 }
 ```
 
-旧面板没有 `port_hopping` 时保持单端口运行。设置为 `null` 或删除字段会禁用自动转发。范围端点和监听端口必须位于 `1..65535`，`start <= end`；范围可以包含监听端口。此字段仅用于 `protocol=hysteria` 且 `version=2`。监听地址必须是 IP 字面量或空值。
+内核只监听 `server_port`。PREROUTING NAT 将范围内、发往本机的 UDP 流量重定向到该端口；INPUT 看到的是重定向后的端口，所以只允许范围、却拒绝 `42443/udp`，仍会阻断连接。启用管理后，Node 为实际 `42443/udp` 创建自己的 INPUT 放行规则，放在该后端 INPUT 的外来拒绝规则之前，不在 INPUT 中开放整个跳跃范围。未配置跳跃的 HY2 单端口节点也可使用 INPUT 管理。
 
-独立模式在 `standalone.node` 中使用相同的 `port_hopping` 对象。直接改本地配置文件会通过文件监视器重启该进程中的服务，现有代理连接需要重连；面板 API/WS 更新走节点配置更新流程。
+`port_hopping: null` 或删除该字段只关闭 NAT，不关闭仍在运行的 HY2 监听端口的 INPUT 放行。端口须在 `1..65535`，范围须满足 `start <= end`，仅适用于 `protocol=hysteria`、`version=2`。`listen_ip` 为 IP 字面量或空值；sing-box 与 Xray 均按该地址监听，空值为 `::`，规则按相应地址族及指定目标地址约束。
 
-范围变更走现有内核配置更新流程，可能关闭该节点已有代理连接，客户端需按新订阅重连；Go 主进程和面板控制连接保持。正常停止时删除规则，重启或开机后按面板最新配置重新建立，不把临时 NAT 写入系统的全局规则保存文件。
+standalone 模式在 `standalone.node` 使用相同配置。客户端必须支持跳跃，例如 sing-box 的 `server_ports: ["42450:42453"]`；跳跃间隔由客户端决定。TLS 校验和用户认证仍需正常配置。
 
-客户端需要实际支持端口跳跃。面板生成的 sing-box 配置使用冒号范围，例如 `server_ports: ["42450:42453"]`；`hop_interval` 由客户端决定。服务器不会替客户端定时切换端口。端口跳跃不会关闭 TLS 证书验证，也不会代替 Hysteria2 身份认证。
+## 本地授权与关闭方法
 
-## 安装与权限
+标准安装器安装 `nftables` 和 `iptables`，unit 设置：
 
-标准安装器和 `upgrade` 会安装 `nftables`，并在停服、备份替换程序前检查 `nft` 命令能否执行。Debian/Ubuntu 使用 apt-get，RHEL/CentOS/Rocky/AlmaLinux/Fedora 使用 dnf 或 yum；Alpine 依赖分支使用 apk。安装器仍要求 systemd，默认 OpenRC 的 Alpine 需自行按现有服务方式部署程序。
+```ini
+Environment=XBOARD_NODE_MANAGED_INPUT=1
+```
 
-已有标准节点使用对应新版安装器的 `upgrade`，保留绑定、Token、配置和 CA；不要用 `REPLACE` 重新安装来升级。手动或 Docker 部署也需要容器/主机内的 `nft`、Linux NAT 支持、可写 `/run` 与足够的网络管理权限。容器中的规则只影响其网络命名空间，不能自动修改宿主机或云安全组。
+自定义服务、手动运行或容器没有该环境授权时，INPUT 管理默认关闭。设置本地 YAML `true` 或面板下发配置均不能替代环境授权。管理员可在节点配置中关闭：
 
-标准 systemd unit 继续使用 `NoNewPrivileges=true`，没有为此放宽服务限制。以 root 运行时仍需保有 `CAP_NET_ADMIN`；外部 CapabilityBoundingSet、容器限制、SELinux 或内核限制可能使配置失败。失败信息会提示检查权限、nftables 和冲突，安装器不会通过关闭保护来绕过失败。
+```yaml
+firewall:
+  managed_input: false
+```
 
-## 防火墙与规则归属
+该设置可作为多实例顶层默认值或实例本地配置。文件监视器会重新加载配置并重启进程内服务，现有代理连接需要重连。也可用 v8 安装器升级并关闭：
 
-Node 只管理 `inet xbnode_hop_<实例摘要前24位>` 表，使用完整实例摘要注释识别归属，不把 Token、UUID 或证书写入 nftables。只重定向 UDP 和本机地址；监听 IP 对应的地址族/指定地址会约束匹配范围。拒绝与已有转发冲突或归属不符的表。它不会执行全局 `flush ruleset`、改变 INPUT 默认策略，也不会启用或启动 `nftables.service` 来加载系统规则文件。
+```bash
+sudo bash install.sh upgrade --skip-firewall
+```
 
-节点检查范围是否与本机已有 UDP socket 重叠，避免截获 DNS、WireGuard 等其他服务；只豁免可验证属于当前 Node 的实际监听口。多个节点的重叠转发也会被拒绝。复杂 nft set/map 或规则无法证明不相交时会保守拒绝；发现旧 iptables-legacy 中 UDP 或未知协议的 DNAT/REDIRECT 时要求先统一防火墙后端，不自动改写旧规则。
+这会把标准 unit 的环境值写为 `0`，后续升级保留 `0`；已有本地 YAML opt-out 同样保留。此开关只关闭自动 INPUT，端口跳跃 NAT 仍按 `port_hopping` 独立工作。手动管理防火墙时，须自行放行实际监听端口。
 
-仍需在云安全组、上游路由或外部防火墙允许客户端访问广告中的 UDP 范围。转发在 PREROUTING 中把目的端口改为实际监听端口，主机 INPUT 的规则需允许转发后的监听端口；只放行范围而阻止监听端口仍可能不通。不同防火墙管理器的规则顺序应以实际部署验证。
+节点需 Linux、足够的网络管理权限、可写的受保护 `/run`，以及相应工具和内核支持。标准服务保持 `NoNewPrivileges=true`。规则只作用于 Node 所在网络命名空间；容器中的规则不会自动开放宿主机端口或云安全组。
 
-正常停止、重启、卸载会先停止 Node，使其删除自己拥有的表；不会清空其他应用的规则。强制断电或 SIGKILL 无法执行退出清理，同一稳定实例再次启动时会核对并回收自己留下的表。不要复制同一实例身份并同时运行多份进程。
+## 支持范围和规则归属
 
-Linux 用全局更新锁和每实例生命周期锁协调并发，同一实例的另一进程不能接管活跃规则。没有跳跃配置的旧节点不要求特权；若缺少权限，无法保证回收此前在同一网络命名空间留下的异常终止规则，应由具备权限的原实例处理。明确启用跳跃后，缺依赖、权限不足或规则冲突均会报错，不会把新配置标为成功。配置更新失败时保留原运行配置并按正常同步周期重试；内核候选失败会尝试恢复旧转发，回退也失败时单独报错并继续保留待重试状态。
+INPUT 管理覆盖可识别的 **iptables-nft / iptables-legacy、IPv4 / IPv6** 后端，使用每实例的 `XB_IN_<摘要>` chain 和完整归属注释。NAT 继续使用 `inet xbnode_hop_<摘要>`。不把 Token、用户 UUID、私钥写入规则；不修改默认 policy，不清空外来规则，不写全局 `rules.v4` / `rules.v6`，不启动 `nftables.service` 加载系统规则。
 
-## 验证
+**额外原生 nftables/firewalld INPUT base chain 不受支持。** 独立 nft base chain 的 ACCEPT 不能保证覆盖另一个 chain 的 DROP。检测依据是实际规则布局，不是 firewalld 服务是否运行。Node 检测到不支持的布局会拒绝应用新的自动 INPUT 配置，保留待重试状态，不改写该管理器的规则；请关闭本功能并用该管理器配置监听端口。iptables 形式的 UFW 规则可随实际后端处理，但 reload 后可能有短暂阻断，仍需在自己的环境验证。
 
-先确认机器在线及单端口代理可用，再用面板生成的客户端配置验证范围内连接。配置了范围不等于链路已经畅通；需实际验证 UDP 范围经过云防火墙、主机规则并到达 Node。
+启用 INPUT 管理时，每个网络命名空间只运行**一个 Node 进程**；同一进程可管理多个实例和节点。进程生命周期锁避免另一个启用管理的进程接管规则，锁保留到进程退出。各节点使用不同稳定 owner，停止一个节点不会删除同进程其他节点的规则。不要通过复制锁目录来绕过该约束。
 
-本轮候选源码在专用 Linux VM 完成 **47 项**检查：两内核 standalone 20项、真实面板／NodeWorker machine 模式22项、权限与冲突5项。跳跃间隔5秒，保持同一 TCP 与 UDP 会话45秒并逐字节校验；范围更新、关闭跳跃、退出清理、异常退出接管和冲突拒绝通过。后端另完成12项校验与下发测试。详见[完整报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/docs/HYSTERIA2_AUTO_FORWARDING_REPORT.md)。
+NAT 仍会检查现有 UDP socket、重复范围及不明转发冲突，避免截获 DNS、WireGuard 等其他服务。复杂规则无法安全判断时会拒绝；INPUT 支持两种 iptables 后端不代表旧 legacy NAT 冲突也会自动转换。
 
-测试使用隔离 IPv4 网络和真实 TLS/QUIC；未将局部网络结果当成公网、IPv6、商业客户端、原生 ARM64 或长期负载验收。正式发行字节及公开下载验证以同次 `VERIFICATION.json` 为准。
+云安全组、上游路由和外部防火墙仍须放行客户端访问的 UDP 端口或跳跃范围；Node 不调用云平台 API，也不修改外部规则。
+
+## 更新、恢复与持久性
+
+启动、REST/WS 配置更新时，Service 协调 NAT、INPUT 和内核。规则失败不接受新配置；内核候选失败时尝试恢复旧规则和旧运行配置。多后端恢复属于补偿操作，无法承诺整体原子回滚；补偿失败会单独报错并继续重试。初始网络规则暂时失败时保留待应用配置进入主循环，不因 machine 节点已登记而永久停止重试。
+
+独立的 **30 秒**检查在 WS 连接或断开时都运行，修复当前成功应用配置的 INPUT 与 NAT；不会把已拒绝的待应用配置当成当前规则。仅内核运行且存在用户时保留规则，否则清理。防火墙 reload 后的恢复属于周期修复，等待30秒检查周期之外还包括串行命令执行耗时，期间可能暂时无法连接；不是写入全局保存文件后的即时持久化。
+
+正常停止、重启、卸载先停内核，再清理 owned INPUT/NAT；配置文件重新加载等待旧 Service 清理后再启动。SIGKILL、断电无法执行退出清理；后续启用管理的进程会在严格核对归属后回收旧 INPUT 资源，NAT 按稳定实例核对。关闭管理或回退到不认识 INPUT 的旧程序，不能保证回收此前强制退出留下的资源；先确认正常停止清理，异常时由管理员检查，不要 flush 整套规则。
+
+## 验证范围
+
+先确认实际单端口 HY2 代理可用，再检查跳跃范围、其他端口仍被拒绝，以及正常停止后的清理。`systemctl is-active` 或 `/healthz` 成功只说明进程级状态，不证明内核已启动或 UDP 已放行；初始规则失败重试期间进程可以保持运行。
+
+v8 Linux/netns、重启/reload、多实例、双后端拒绝规则和正式发行资产验收：**待本轮结果填写**，见 [v8 发行说明](RELEASE-v1.13-orphan.8.md)及同版 `VERIFICATION.json`。
+
+历史验证（2026-10-25，v6 候选）：专用 Linux VM 共47项检查，包含双内核 standalone、machine、权限与冲突，使用隔离 IPv4、真实 TLS/QUIC 和45秒会话；详见[历史报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/docs/HYSTERIA2_AUTO_FORWARDING_REPORT.md)。这些结果不包含 v8 INPUT 功能，也不计入 v8 总数。公网、原生 ARM64、商业客户端和长期负载不能由本地测试推定。

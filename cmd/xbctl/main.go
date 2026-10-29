@@ -47,28 +47,30 @@ type instanceRow struct {
 }
 
 type fileRootConfig struct {
-	Log       *fileLogConfig     `yaml:"log,omitempty"`
-	Kernel    *fileKernelConfig  `yaml:"kernel,omitempty"`
-	Node      *fileNodeConfig    `yaml:"node,omitempty"`
-	WS        *config.WSConfig   `yaml:"ws,omitempty"`
-	Runtime   *fileRuntimeConfig `yaml:"runtime,omitempty"`
-	Cert      *config.CertConfig `yaml:"cert,omitempty"`
-	Instances []fileInstance     `yaml:"instances,omitempty"`
+	Log       *fileLogConfig         `yaml:"log,omitempty"`
+	Kernel    *fileKernelConfig      `yaml:"kernel,omitempty"`
+	Node      *fileNodeConfig        `yaml:"node,omitempty"`
+	WS        *config.WSConfig       `yaml:"ws,omitempty"`
+	Runtime   *fileRuntimeConfig     `yaml:"runtime,omitempty"`
+	Firewall  *config.FirewallConfig `yaml:"firewall,omitempty"`
+	Cert      *config.CertConfig     `yaml:"cert,omitempty"`
+	Instances []fileInstance         `yaml:"instances,omitempty"`
 }
 
 type fileInstance struct {
-	ID         string             `yaml:"id,omitempty"`
-	Panel      filePanelConfig    `yaml:"panel"`
-	Node       *fileNodeConfig    `yaml:"node,omitempty"`
-	Kernel     fileKernelConfig   `yaml:"kernel"`
-	Log        fileLogConfig      `yaml:"log"`
-	Runtime    *fileRuntimeConfig `yaml:"runtime,omitempty"`
-	HealthPort int                `yaml:"health_port,omitempty"`
-	Machine    *fileMachineConfig `yaml:"machine,omitempty"`
-	Standalone map[string]any     `yaml:"standalone,omitempty"`
-	Cert       *config.CertConfig `yaml:"cert,omitempty"`
-	WS         *config.WSConfig   `yaml:"ws,omitempty"`
-	Nodes      []config.NodeEntry `yaml:"nodes,omitempty"`
+	ID         string                 `yaml:"id,omitempty"`
+	Panel      filePanelConfig        `yaml:"panel"`
+	Node       *fileNodeConfig        `yaml:"node,omitempty"`
+	Kernel     fileKernelConfig       `yaml:"kernel"`
+	Log        fileLogConfig          `yaml:"log"`
+	Runtime    *fileRuntimeConfig     `yaml:"runtime,omitempty"`
+	Firewall   *config.FirewallConfig `yaml:"firewall,omitempty"`
+	HealthPort int                    `yaml:"health_port,omitempty"`
+	Machine    *fileMachineConfig     `yaml:"machine,omitempty"`
+	Standalone map[string]any         `yaml:"standalone,omitempty"`
+	Cert       *config.CertConfig     `yaml:"cert,omitempty"`
+	WS         *config.WSConfig       `yaml:"ws,omitempty"`
+	Nodes      []config.NodeEntry     `yaml:"nodes,omitempty"`
 }
 
 type filePanelConfig struct {
@@ -854,6 +856,9 @@ func writeRootConfig(path string, root *config.RootConfig) error {
 
 	// Preserve top-level shared settings so instances can inherit them.
 	p := &root.Config
+	if p.Firewall.ManagedInput != nil {
+		out.Firewall = &p.Firewall
+	}
 	if p.Log.Level != "" || p.Log.Output != "" {
 		out.Log = &fileLogConfig{Level: p.Log.Level, Output: p.Log.Output}
 	}
@@ -909,6 +914,9 @@ func writeRootConfig(path string, root *config.RootConfig) error {
 				TrackInterval:        inst.Node.TrackInterval,
 				DeviceReportInterval: inst.Node.DeviceReportInterval,
 			}
+		}
+		if inst.Firewall.ManagedInput != nil {
+			fi.Firewall = &inst.Firewall
 		}
 		if inst.Runtime.GoMemLimit != "" || inst.Runtime.GoGCPercent != 0 {
 			fi.Runtime = &fileRuntimeConfig{
@@ -1163,7 +1171,42 @@ func latestInstanceID(instances []*config.Config) string {
 }
 
 func regenerateServiceFile() error {
-	unit := fmt.Sprintf(`[Unit]
+	managedInput := true
+	if previous, err := os.ReadFile(serviceFilePath); err == nil {
+		var parseErr error
+		managedInput, parseErr = managedInputFromUnit(string(previous))
+		if parseErr != nil {
+			return parseErr
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(serviceFilePath, []byte(renderServiceFile(managedInput)), 0o644)
+}
+
+func managedInputFromUnit(unit string) (bool, error) {
+	value, found := "1", false
+	for _, line := range strings.Split(unit, "\n") {
+		if strings.HasPrefix(line, "Environment=XBOARD_NODE_MANAGED_INPUT=") {
+			if found {
+				return false, errors.New("ambiguous managed INPUT unit policy")
+			}
+			found = true
+			value = strings.TrimPrefix(line, "Environment=XBOARD_NODE_MANAGED_INPUT=")
+		}
+	}
+	if value != "0" && value != "1" {
+		return false, errors.New("invalid managed INPUT unit policy")
+	}
+	return value == "1", nil
+}
+
+func renderServiceFile(managedInput bool) string {
+	value := 0
+	if managedInput {
+		value = 1
+	}
+	return fmt.Sprintf(`[Unit]
 Description=Xboard Node Backend
 After=network-online.target
 Wants=network-online.target
@@ -1172,9 +1215,12 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%s
 EnvironmentFile=-%s
+Environment=XBOARD_NODE_MANAGED_INPUT=%d
 ExecStart=%s -c %s
 Restart=always
 RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
 LimitNOFILE=1048576
 NoNewPrivileges=true
 StandardOutput=journal
@@ -1182,8 +1228,7 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-`, defaultInstallRoot, defaultCredentialsPath, defaultBinaryPath, defaultConfigPath)
-	return os.WriteFile(serviceFilePath, []byte(unit), 0o644)
+`, defaultInstallRoot, defaultCredentialsPath, value, defaultBinaryPath, defaultConfigPath)
 }
 
 func machineIDPtr(cfg *config.Config) *int {

@@ -118,7 +118,7 @@ printf 'RESULT:%s:%s\n' "$ACTION" "$remaining"
     def test_fixed_release_urls_and_override(self):
         for arch in ("amd64", "arm64"):
             output = self.ok(f'ARCH={arch}; resolve_download_url "xboard-node-linux-$ARCH"; echo "$DOWNLOAD_URL"')
-            self.assertIn(f"/ksr-v/Xboard-Node--Custom-Source/releases/download/v1.13-orphan.7/xboard-node-linux-{arch}", output)
+            self.assertIn(f"/ksr-v/Xboard-Node--Custom-Source/releases/download/v1.13-orphan.8/xboard-node-linux-{arch}", output)
             self.assertNotIn("latest", output)
         output = self.ok('parse_args --version custom --download-base https://assets.example.com/releases; '
                          'resolve_download_url xbctl-linux-amd64; echo "$DOWNLOAD_URL"')
@@ -141,7 +141,7 @@ printf 'RESULT:%s:%s\n' "$ACTION" "$remaining"
                             stage.mkdir()
                             marker = stage / "executed"
                             result = self.shell(f'''
-ARCH={arch}; ENDPOINT_TRUST={trust}; RELEASE_VERSION=v1.13-orphan.7
+ARCH={arch}; ENDPOINT_TRUST={trust}; RELEASE_VERSION=v1.13-orphan.8
 TMP_DIR="$TASK_INTEGRITY_STAGE"
 BINARY_SOURCE="$TASK_TAMPERED_PROGRAM"; CLI_BINARY_SOURCE="$TASK_TAMPERED_PROGRAM"
 if stage_{"binary" if kind == "node" else "xbctl"}; then echo UNSAFE_ACCEPTED; exit 91; fi
@@ -165,7 +165,7 @@ if verify_endpoint_binary node /nonexistent-fixture-binary; then echo UNSAFE_ACC
 echo RELEASE_REFUSED
 ''')
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn("can only verify v1.13-orphan.7 assets", result.stdout)
+                    self.assertIn("can only verify v1.13-orphan.8 assets", result.stdout)
                     self.assertIn("RELEASE_REFUSED", result.stdout)
                     self.assertNotIn("UNSAFE_ACCEPTED", result.stdout)
 
@@ -178,6 +178,7 @@ CONFIG_FILE="$TASK_FIXTURE_CONFIG"; CLI_PATH=/nonexistent-fixture-cli
 detect_current_state() { CURRENT_STATE=installed; }
 ensure_dirs() { :; }; stage_binary() { :; }; stage_xbctl() { :; }
 ensure_nft_cli() { :; }
+ensure_input_cli() { :; }
 stage_installer() { :; }; install_management_files() { :; }; stop_existing_service() { :; }
 render_service() { :; }; backup_existing_state() { BACKUP_PATH=/nonexistent-fixture-backup; }
 mktemp() { printf /nonexistent-fixture-stage; }
@@ -210,7 +211,7 @@ chmod() { :; }; cp() { echo UNEXPECTED_LOCAL_COPY; }
 stage_xbctl
 ''', env={"TASK_LOCAL_DIR": Path(directory).as_posix()})
             self.assertIn("DOWNLOAD:", result.stdout)
-            self.assertIn("/download/v1.13-orphan.7/xbctl-linux-amd64", result.stdout)
+            self.assertIn("/download/v1.13-orphan.8/xbctl-linux-amd64", result.stdout)
             self.assertNotIn("UNEXPECTED_LOCAL_COPY", result.stdout)
             self.assertNotEqual(result.returncode, 0)
 
@@ -271,6 +272,7 @@ cat "$TASK_DEPENDENCY_RECORD"
 ''', env={"TASK_MANAGER": manager, "TASK_OS": os_name,
           "TASK_DEPENDENCY_RECORD": path.as_posix()})
                     self.assertRegex(output, rf"{manager} (?:install|add) [^\n]*\bnftables\b")
+                    self.assertRegex(output, rf"{manager} (?:install|add) [^\n]*\biptables\b")
                     self.assertNotIn("systemctl", output)
                     self.assertNotIn("nft -f", output)
                     path.unlink()
@@ -315,6 +317,87 @@ echo NFT_REFUSED
         self.assertNotIn("CapabilityBoundingSet=", SCRIPT)
         self.assertNotIn("nft flush", SCRIPT)
         self.assertNotRegex(SCRIPT, r"systemctl\s+(?:enable|start|restart)\s+nftables")
+
+    def test_managed_input_unit_default_and_skip_flag(self):
+        with tempfile.TemporaryDirectory(prefix="node-input-unit-") as directory:
+            for args, expected in (("", 1), ("--skip-firewall", 0)):
+                output = self.ok('''
+TMP_DIR="$TASK_STAGE"
+parse_args ''' + args + '''
+render_service
+cat "$TMP_DIR/$SERVICE_NAME"
+''', env={"TASK_STAGE": Path(directory).as_posix()})
+                self.assertIn(f"Environment=XBOARD_NODE_MANAGED_INPUT={expected}", output)
+                self.assertIn("KillMode=control-group", output)
+                self.assertIn("TimeoutStopSec=30", output)
+
+    def test_upgrade_policy_preserves_explicit_unit_optout(self):
+        with tempfile.TemporaryDirectory(prefix="node-input-policy-") as directory:
+            unit = Path(directory) / "fixture.service"
+            for content, expected in (("[Service]\n", 1),
+                                      ("Environment=XBOARD_NODE_MANAGED_INPUT=0\n", 0),
+                                      ("Environment=XBOARD_NODE_MANAGED_INPUT=1\n", 1)):
+                unit.write_text(content, encoding="utf-8", newline="\n")
+                output = self.ok('SERVICE_PATH="$TASK_UNIT"; load_managed_input_policy; '
+                                 'printf "POLICY:%s\\n" "$MANAGED_INPUT"', env={"TASK_UNIT": unit.as_posix()})
+                self.assertIn(f"POLICY:{expected}", output)
+            unit.write_text("Environment=XBOARD_NODE_MANAGED_INPUT=1\n", encoding="utf-8")
+            output = self.ok('SERVICE_PATH="$TASK_UNIT"; parse_args upgrade --skip-firewall; '
+                             'load_managed_input_policy; printf "POLICY:%s\\n" "$MANAGED_INPUT"',
+                             env={"TASK_UNIT": unit.as_posix()})
+            self.assertIn("POLICY:0", output)
+            unit.write_text("Environment=XBOARD_NODE_MANAGED_INPUT=0\nEnvironment=XBOARD_NODE_MANAGED_INPUT=1\n", encoding="utf-8")
+            self.assertNotEqual(self.shell('SERVICE_PATH="$TASK_UNIT"; load_managed_input_policy',
+                                          env={"TASK_UNIT": unit.as_posix()}).returncode, 0)
+
+    def test_input_preflight_is_readonly_and_optout_needs_no_iptables(self):
+        output = self.ok('''
+iptables() { [[ "$*" == --version ]] || return 91; }
+ip6tables() { [[ "$*" == --version ]] || return 91; }
+ensure_input_cli
+echo INPUT_TOOLS_READY
+''')
+        self.assertIn("INPUT_TOOLS_READY", output)
+        output = self.ok('''
+command() {
+    if [[ "$1" == -v && "$2" == iptables ]]; then return 1; fi
+    builtin command "$@"
+}
+MANAGED_INPUT=0
+ensure_input_cli
+echo INPUT_DISABLED
+''')
+        self.assertIn("INPUT_DISABLED", output)
+        result = self.shell('''
+command() {
+    if [[ "$1" == -v && "$2" == iptables ]]; then return 1; fi
+    builtin command "$@"
+}
+ensure_input_cli
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--skip-firewall", result.stdout)
+
+    def test_managed_service_accepts_only_fixed_input_environment(self):
+        with tempfile.TemporaryDirectory(prefix="node-input-managed-") as directory:
+            stage = Path(directory)
+            code = '''
+TMP_DIR="$TASK_STAGE"
+render_service
+SERVICE_PATH="$TMP_DIR/$SERVICE_NAME"
+systemctl() {
+    case "$*" in
+        *FragmentPath*) printf '%s\\n' "$SERVICE_PATH" ;;
+        *DropInPaths*) printf '\\n' ;;
+        *ExecStart*) printf 'argv[]=%s -c %s ;\\n' "$BINARY_PATH" "$CONFIG_FILE" ;;
+    esac
+}
+verify_managed_service
+'''
+            self.ok(code, env={"TASK_STAGE": stage.as_posix()})
+            result = self.shell(code + 'printf "Environment=XBOARD_NODE_MANAGED_INPUT=anything\\n" >> "$SERVICE_PATH"; verify_managed_service',
+                                env={"TASK_STAGE": stage.as_posix()})
+            self.assertNotEqual(result.returncode, 0)
 
     def test_buffered_readme_command(self):
         for behavior, executed in (("printf 'fixture script'", True), ("printf 'partial'; return 22", False),
