@@ -31,12 +31,12 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.8}"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.9}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
 DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/dev}"
-INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.8"
+INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.9"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -266,7 +266,7 @@ usage() {
     --kernel, -k        singbox or xray (default: singbox)
     --endpoint-ca-base64       Panel-generated public CA bundle (no private key)
     --endpoint-ca-fingerprint  Independently delivered SHA-256 root pins
-    --version           Fixed release version (this installer verifies v1.13-orphan.8 only)
+    --version           Fixed release version (this installer verifies v1.13-orphan.9 only)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
@@ -1018,15 +1018,15 @@ stage_endpoint_trust() {
         ENDPOINT_TRUST=1
     fi
     if [ "$ENDPOINT_TRUST" -eq 1 ]; then
-        [ "$RELEASE_VERSION" = v1.13-orphan.8 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.8'; return 1; }
+        [ "$RELEASE_VERSION" = v1.13-orphan.9 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.9'; return 1; }
     fi
 }
 
 verify_endpoint_binary() {
     # Pin executable bytes for both domain and private-CA installations. Changing
     # the CA mode must never disable the release's binary integrity check.
-    [ "$RELEASE_VERSION" = v1.13-orphan.8 ] || {
-        log_error 'This installer can only verify v1.13-orphan.8 assets; use the matching audited installer for another release'
+    [ "$RELEASE_VERSION" = v1.13-orphan.9 ] || {
+        log_error 'This installer can only verify v1.13-orphan.9 assets; use the matching audited installer for another release'
         return 1
     }
     local expected

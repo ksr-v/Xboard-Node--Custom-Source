@@ -57,6 +57,9 @@ jobs:
           sudo apt-get install -y -qq iptables nftables iproute2
           go test -c -tags netns -o .dependency-work/inputfirewall-netns.test ./internal/inputfirewall
           sudo python3 tools/test_inputfirewall_netns.py --binary "$PWD/.dependency-work/inputfirewall-netns.test"
+          go test -c -tags netns -o .dependency-work/portforward-netns.test ./internal/portforward
+          sudo python3 tools/test_inputfirewall_netns.py --binary "$PWD/.dependency-work/portforward-netns.test" --suite nat --label lifecycle
+          sudo python3 tools/test_inputfirewall_netns.py --binary "$PWD/.dependency-work/portforward-netns.test" --suite migration --label migration
 
       - name: Damage a real C-risk module in a disposable copy
         run: python3 tools/corruption_test.py

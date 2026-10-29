@@ -14,6 +14,8 @@ import (
 )
 
 const markerPrefix = "xboard-node-portforward:v1:"
+const portableMarkerPrefix = "xboard-node-portforward:v2:"
+const ownerChain = "__xbnode_owner"
 
 type system interface {
 	available() bool
@@ -159,7 +161,7 @@ func (m *Manager) update(want *redirect) error {
 		m.engaged = false
 		return nil
 	}
-	if err := m.system.apply(batch(m.table, m.marker, view.owned, want)); err != nil {
+	if err := m.system.apply(batch(m.table, m.marker, view.families, want)); err != nil {
 		return err
 	}
 	m.engaged = want != nil
@@ -184,30 +186,28 @@ func (m *Manager) Close() error {
 	return m.update(nil)
 }
 
-func batch(table, marker string, replace bool, r *redirect) string {
+func batch(table, marker string, replace map[string]bool, r *redirect) string {
 	var b strings.Builder
-	if replace {
-		fmt.Fprintf(&b, "delete table inet %s\n", table)
+	for _, family := range []string{"inet", "ip", "ip6"} {
+		if replace[family] {
+			fmt.Fprintf(&b, "delete table %s %s\n", family, table)
+		}
 	}
 	if r == nil {
 		return b.String()
 	}
-	fmt.Fprintf(&b, "table inet %s {\n comment %q\n chain prerouting {\n type nat hook prerouting priority dstnat; policy accept;\n ", table, marker)
-	if r.family == 4 {
-		b.WriteString("meta nfproto ipv4 ")
-	} else if r.family == 6 {
-		b.WriteString("meta nfproto ipv6 ")
-	}
-	if r.address.IsValid() {
-		family := "ip6"
-		if r.address.Is4() {
-			family = "ip"
+	portableMarker := portableMarkerPrefix + strings.TrimPrefix(marker, markerPrefix)
+	for _, family := range []string{"ip", "ip6"} {
+		if r.family == 4 && family != "ip" || r.family == 6 && family != "ip6" {
+			continue
 		}
-		fmt.Fprintf(&b, "%s daddr %s ", family, r.address)
+		fmt.Fprintf(&b, "table %s %s {\n chain %s {\n return comment %q\n }\n chain prerouting {\n type nat hook prerouting priority -100; policy accept;\n ", family, table, ownerChain, portableMarker)
+		if r.address.IsValid() {
+			fmt.Fprintf(&b, "%s daddr %s ", family, r.address)
+		}
+		// Per-family NAT and a rule-comment sentinel work on Linux 4.19 and
+		// nft 0.9.0; inet NAT and table comments need newer kernel/CLI features.
+		fmt.Fprintf(&b, "fib daddr type local meta l4proto udp udp dport %d-%d counter redirect to :%d comment %q\n }\n}\n", r.start, r.end, r.target, portableMarker)
 	}
-	// fib local restricts redirects to addresses actually assigned to this host.
-	// INPUT policy remains untouched; the administrator must allow the listener
-	// and the advertised UDP range/security group as appropriate for the host.
-	fmt.Fprintf(&b, "fib daddr type local meta l4proto udp udp dport %d-%d counter redirect to :%d\n }\n}\n", r.start, r.end, r.target)
 	return b.String()
 }

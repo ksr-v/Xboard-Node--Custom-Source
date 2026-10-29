@@ -3,14 +3,24 @@
 package portforward
 
 import (
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cedar2025/xboard-node/internal/nftsnapshot"
 	"golang.org/x/sys/unix"
 )
+
+func TestNftCommandCaptureCannotBypassInventoryLimit(t *testing.T) {
+	var output nftOutput
+	_, err := io.Copy(&output, io.LimitReader(strings.NewReader(strings.Repeat("x", nftsnapshot.MaxOutput+1)), nftsnapshot.MaxOutput+1))
+	if err != nftsnapshot.ErrTooLarge || !output.exceeded || output.buffer.Len() > nftsnapshot.MaxOutput {
+		t.Fatal("nft stdout exceeded bounded inventory")
+	}
+}
 
 func TestRootLockRejectsSymlinksAndPublicPermissions(t *testing.T) {
 	dir := t.TempDir()

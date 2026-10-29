@@ -3,6 +3,8 @@ package portforward
 import (
 	"encoding/json"
 	"errors"
+	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -58,24 +60,51 @@ func (s fakeSystem) apply(script string) error {
 		if len(parts) == 4 && parts[0] == "delete" {
 			rows := s.host.rows[:0]
 			for _, row := range s.host.rows {
-				table, _ := row["table"].(map[string]any)
-				if table["name"] != parts[3] {
+				var family, name string
+				for kind, raw := range row {
+					if item, ok := raw.(map[string]any); ok {
+						family, _ = item["family"].(string)
+						field := "table"
+						if kind == "table" {
+							field = "name"
+						}
+						name, _ = item[field].(string)
+					}
+				}
+				if family != parts[2] || name != parts[3] {
 					rows = append(rows, row)
 				}
 			}
 			s.host.rows = rows
 		}
 	}
-	var table string
+	var family, table, marker string
 	for _, line := range strings.Split(script, "\n") {
 		parts := strings.Fields(line)
 		if len(parts) > 2 && parts[0] == "table" {
-			table = parts[2]
+			family, table = parts[1], parts[2]
 		}
-		if len(parts) == 2 && parts[0] == "comment" && table != "" {
-			var marker string
-			_ = json.Unmarshal([]byte(parts[1]), &marker)
-			s.host.rows = append(s.host.rows, tableRow(table, marker))
+		if len(parts) == 3 && parts[0] == "return" && parts[1] == "comment" {
+			if json.Unmarshal([]byte(parts[2]), &marker) != nil {
+				return errors.New("bad fake marker")
+			}
+		}
+		if strings.Contains(line, "redirect to :") {
+			r := &redirect{}
+			for i, token := range parts {
+				if token == "dport" {
+					bounds := strings.Split(parts[i+1], "-")
+					r.start, _ = strconv.Atoi(bounds[0])
+					r.end, _ = strconv.Atoi(bounds[1])
+				}
+				if token == "to" {
+					r.target, _ = strconv.Atoi(strings.TrimPrefix(parts[i+1], ":"))
+				}
+				if token == "daddr" && i == 1 {
+					r.address, _ = netip.ParseAddr(parts[i+1])
+				}
+			}
+			s.host.rows = append(s.host.rows, portableRows(family, table, marker, r)...)
 		}
 	}
 	return nil
@@ -141,14 +170,14 @@ func TestAtomicReplaceRollbackAndOwnOnlyCleanup(t *testing.T) {
 	if err := m.Update(node()); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.rows) != 2 {
+	if tableCount(h.rows) != 2 {
 		t.Fatalf("expected foreign + own: %v", h.rows)
 	}
 	first := h.scripts[0]
 	if strings.Contains(first, "flush") || strings.Contains(first, "add rule") || strings.Contains(first, "private/path") || strings.Contains(first, "panel-url") || strings.Contains(first, " accept\n") {
 		t.Fatal("unsafe or sensitive script", first)
 	}
-	if !strings.Contains(first, "fib daddr type local") || !strings.Contains(first, "meta nfproto ipv4") || !strings.Contains(first, "redirect to :42443") {
+	if !strings.Contains(first, "fib daddr type local") || !strings.Contains(first, "table ip ") || strings.Contains(first, "table inet ") || !strings.Contains(first, "redirect to :42443") {
 		t.Fatal(first)
 	}
 	h.failApply = true
@@ -157,10 +186,10 @@ func TestAtomicReplaceRollbackAndOwnOnlyCleanup(t *testing.T) {
 	if m.Update(next) == nil {
 		t.Fatal("failed atomic update accepted")
 	}
-	if len(h.rows) != 2 {
+	if tableCount(h.rows) != 2 {
 		t.Fatal("failed batch changed accepted rules")
 	}
-	if !strings.HasPrefix(h.scripts[1], "delete table inet "+m.table+"\n") {
+	if !strings.HasPrefix(h.scripts[1], "delete table ip "+m.table+"\n") {
 		t.Fatal("replacement not a single atomic batch")
 	}
 	h.failApply = false
@@ -237,7 +266,7 @@ func TestSameOwnerLiveLeasePreventsSecondCleanup(t *testing.T) {
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.scripts) != count || len(h.rows) != 1 {
+	if len(h.scripts) != count || tableCount(h.rows) != 1 {
 		t.Fatal("failed second owner deleted live owner's table")
 	}
 	if err := first.Close(); err != nil {
@@ -274,9 +303,9 @@ func TestAddressFamiliesRestrictGeneratedRules(t *testing.T) {
 	}{
 		{"", "fib daddr type local", "meta nfproto"},
 		{"::", "fib daddr type local", "meta nfproto"},
-		{"0.0.0.0", "meta nfproto ipv4", "ip daddr"},
+		{"0.0.0.0", "table ip safe_table", "table ip6 safe_table"},
 		{"192.0.2.7", "ip daddr 192.0.2.7", "ip6 daddr"},
-		{"2001:db8::7", "meta nfproto ipv6 ip6 daddr 2001:db8::7", "ip daddr"},
+		{"2001:db8::7", "table ip6 safe_table", "table ip safe_table"},
 	} {
 		t.Run(tc.ip, func(t *testing.T) {
 			n := node()
@@ -285,7 +314,7 @@ func TestAddressFamiliesRestrictGeneratedRules(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			script := batch("safe_table", "hash-only", false, r)
+			script := batch("safe_table", "hash-only", nil, r)
 			if !strings.Contains(script, tc.want) || strings.Contains(script, tc.absent) {
 				t.Fatal(script)
 			}
@@ -407,8 +436,9 @@ func TestNoRangePermissionFailureDoesNotBreakUnrelatedNode(t *testing.T) {
 
 func TestStaleTargetIsNotExemptedByNewManager(t *testing.T) {
 	m, h := newFake(t, "stale-old-target")
-	oldRule := map[string]any{"rule": map[string]any{"family": "inet", "table": m.table, "chain": "prerouting", "expr": []any{map[string]any{"redirect": map[string]any{"port": 42451}}}}}
-	h.rows = append(h.rows, tableRow(m.table, m.marker), oldRule)
+	old, _ := validate(node())
+	old.target = 42451
+	h.rows = legacyRows(m.table, m.marker, old)
 	if err := m.Update(node()); err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +447,8 @@ func TestStaleTargetIsNotExemptedByNewManager(t *testing.T) {
 	}
 	// Only an accepted update during this Manager's lifetime can establish
 	// the old target; it must still be present in its verified own table.
-	h.rows = []map[string]any{tableRow(m.table, m.marker), {"rule": map[string]any{"family": "inet", "table": m.table, "chain": "prerouting", "expr": []any{map[string]any{"redirect": map[string]any{"port": 42443}}}}}}
+	old.target = 42443
+	h.rows = legacyRows(m.table, m.marker, old)
 	next := node()
 	next.ServerPort = 42500
 	if err := m.Update(next); err != nil {

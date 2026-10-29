@@ -191,6 +191,8 @@ func TestACMEFingerprint(t *testing.T) {
 		differs bool
 	}{
 		{"same", func(*config.CertConfig) {}, false},
+		{"domain_case", func(c *config.CertConfig) { c.Domain = "A.Example.COM" }, false},
+		{"domain_whitespace", func(c *config.CertConfig) { c.Domain = " \ta.example.com\n" }, false},
 		{"domain", func(c *config.CertConfig) { c.Domain = "b.example.com" }, true},
 		{"mode", func(c *config.CertConfig) { c.CertMode = "http" }, true},
 		{"email", func(c *config.CertConfig) { c.Email = "other@example.com" }, true},

@@ -9,13 +9,15 @@ import (
 
 type nftTable struct{ Family, Name, Comment string }
 type nftRule struct {
-	Family string                       `json:"family"`
-	Table  string                       `json:"table"`
-	Chain  string                       `json:"chain"`
-	Expr   []map[string]json.RawMessage `json:"expr"`
+	Family  string                       `json:"family"`
+	Table   string                       `json:"table"`
+	Chain   string                       `json:"chain"`
+	Expr    []map[string]json.RawMessage `json:"expr"`
+	Comment string                       `json:"comment"`
 }
 type inventory struct {
 	owned      bool
+	families   map[string]bool
 	rules      []nftRule
 	oldTargets []int
 }
@@ -27,18 +29,22 @@ func inspect(data []byte, table, marker string) (*inventory, error) {
 	if len(data) > 16<<20 || json.Unmarshal(data, &doc) != nil || doc.Entries == nil {
 		return nil, fmt.Errorf("UDP port hopping cannot safely parse the nftables ruleset; no rules changed")
 	}
-	v := &inventory{}
+	v := &inventory{families: make(map[string]bool)}
+	candidates := make(map[string]bool)
 	for _, entry := range *doc.Entries {
+		if len(entry) != 1 {
+			return nil, fmt.Errorf("UDP port hopping cannot safely parse the nftables ruleset; no rules changed")
+		}
 		if raw, ok := entry["table"]; ok {
 			var t nftTable
 			if json.Unmarshal(raw, &t) != nil || t.Name == "" || t.Family == "" {
 				return nil, fmt.Errorf("UDP port hopping cannot safely parse an nftables table; no rules changed")
 			}
-			if t.Family == "inet" && t.Name == table {
-				if t.Comment != marker || v.owned {
+			if (t.Family == "inet" || t.Family == "ip" || t.Family == "ip6") && t.Name == table {
+				if candidates[t.Family] || t.Family == "inet" && t.Comment != marker {
 					return nil, fmt.Errorf("UDP port hopping table %s has a foreign or duplicate ownership marker; refusing replacement", table)
 				}
-				v.owned = true
+				candidates[t.Family] = true
 			}
 		}
 		if raw, ok := entry["rule"]; ok {
@@ -49,21 +55,19 @@ func inspect(data []byte, table, marker string) (*inventory, error) {
 			v.rules = append(v.rules, r)
 		}
 	}
+	for family := range candidates {
+		targets, err := verifyOwnedTable(*doc.Entries, family, table, marker)
+		if err != nil {
+			return nil, err
+		}
+		v.families[family] = true
+		v.owned = true
+		v.oldTargets = append(v.oldTargets, targets...)
+	}
 	// Ignore a rule only after the containing table's full marker was verified.
 	filtered := v.rules[:0]
 	for _, r := range v.rules {
-		if v.owned && r.Family == "inet" && r.Table == table {
-			for _, expr := range r.Expr {
-				if raw, ok := expr["redirect"]; ok {
-					var target struct {
-						Port int `json:"port"`
-					}
-					if json.Unmarshal(raw, &target) == nil && target.Port > 0 && target.Port <= 65535 {
-						v.oldTargets = append(v.oldTargets, target.Port)
-					}
-				}
-			}
-		} else {
+		if !v.families[r.Family] || r.Table != table {
 			filtered = append(filtered, r)
 		}
 	}
@@ -94,6 +98,9 @@ func disjoint(rule nftRule, want *redirect) bool {
 	if (want.family == 4 && rule.Family == "ip6") || (want.family == 6 && rule.Family == "ip") {
 		return true
 	}
+	if !pureNATConditions(rule) {
+		return false
+	}
 	for _, e := range rule.Expr {
 		raw, ok := e["match"]
 		if !ok {
@@ -104,18 +111,22 @@ func disjoint(rule nftRule, want *redirect) bool {
 			Left  map[string]json.RawMessage `json:"left"`
 			Right json.RawMessage            `json:"right"`
 		}
-		if json.Unmarshal(raw, &match) != nil || (match.Op != "==" && match.Op != "in") {
+		if json.Unmarshal(raw, &match) != nil || (match.Op != "" && match.Op != "==" && match.Op != "in") {
+			continue
+		}
+		fields, known := object(raw, "op", "left", "right")
+		if !known || len(match.Left) != 1 {
+			continue
+		}
+		if value, exists := fields["op"]; exists && stringValue(value) == "" {
 			continue
 		}
 		if metaRaw, ok := match.Left["meta"]; ok {
-			var meta struct {
-				Key string `json:"key"`
-			}
-			if json.Unmarshal(metaRaw, &meta) == nil {
-				if meta.Key == "l4proto" && excludesValue(match.Right, "udp", 17) {
+			if key, ok := metaKey(metaRaw); ok {
+				if key == "l4proto" && excludesValue(match.Right, "udp", 17) {
 					return true
 				}
-				if meta.Key == "nfproto" && want.family != 0 {
+				if key == "nfproto" && want.family != 0 {
 					name, number := "ipv4", 2
 					if want.family == 6 {
 						name, number = "ipv6", 10
@@ -127,22 +138,19 @@ func disjoint(rule nftRule, want *redirect) bool {
 			}
 		}
 		if payloadRaw, ok := match.Left["payload"]; ok {
-			var p struct {
-				Protocol string `json:"protocol"`
-				Field    string `json:"field"`
-			}
-			if json.Unmarshal(payloadRaw, &p) != nil {
+			protocol, field, known := payload(payloadRaw)
+			if !known {
 				continue
 			}
 			// A transport payload match implies its protocol, even without an
 			// explicit meta l4proto selector in nft's JSON representation.
-			if p.Protocol == "tcp" || p.Protocol == "sctp" || p.Protocol == "dccp" || p.Protocol == "icmp" || p.Protocol == "icmpv6" {
+			if protocol == "tcp" || protocol == "sctp" || protocol == "dccp" || protocol == "icmp" || protocol == "icmpv6" {
 				return true
 			}
-			if (p.Protocol == "ip6" && want.family == 4) || (p.Protocol == "ip" && want.family == 6) {
+			if (protocol == "ip6" && want.family == 4) || (protocol == "ip" && want.family == 6) {
 				return true
 			}
-			if p.Protocol == "udp" && p.Field == "dport" {
+			if protocol == "udp" && field == "dport" {
 				if ranges, ok := portRanges(match.Right); ok {
 					overlaps := false
 					for _, r := range ranges {
@@ -155,7 +163,7 @@ func disjoint(rule nftRule, want *redirect) bool {
 					}
 				}
 			}
-			if (p.Protocol == "ip" || p.Protocol == "ip6") && p.Field == "daddr" && want.address.IsValid() {
+			if (protocol == "ip" || protocol == "ip6") && field == "daddr" && want.address.IsValid() {
 				if includes, known := addressIncludes(match.Right, want.address); known && !includes {
 					return true
 				}
@@ -163,6 +171,35 @@ func disjoint(rule nftRule, want *redirect) bool {
 		}
 	}
 	return false
+}
+
+// A later match cannot prove which original packets reach a rule if an
+// earlier action can rewrite their address/port/protocol. Unknown actions are
+// conservative conflicts, even when another expression looks disjoint.
+func pureNATConditions(rule nftRule) bool {
+	nat := false
+	for _, expr := range rule.Expr {
+		if len(expr) != 1 {
+			return false
+		}
+		for key := range expr {
+			switch key {
+			case "match":
+				if nat {
+					return false
+				}
+			case "counter":
+			case "dnat", "redirect", "tproxy":
+				if nat {
+					return false
+				}
+				nat = true
+			default:
+				return false
+			}
+		}
+	}
+	return nat
 }
 
 // A value/set is only used to prove non-overlap when every item is understood.
@@ -195,6 +232,9 @@ func excludesValue(raw json.RawMessage, text string, number int) bool {
 }
 
 func portRanges(raw json.RawMessage) ([][2]int, bool) {
+	if string(raw) == "null" {
+		return nil, false
+	}
 	var n int
 	if json.Unmarshal(raw, &n) == nil && n >= 0 && n <= 65535 {
 		return [][2]int{{n, n}}, true

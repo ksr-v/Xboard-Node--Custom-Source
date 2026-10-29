@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"time"
 
+	"github.com/cedar2025/xboard-node/internal/nftsnapshot"
 	"golang.org/x/sys/unix"
 )
 
@@ -80,15 +82,36 @@ func nft(input string, args ...string) ([]byte, error) {
 	if input != "" {
 		cmd.Stdin = bytes.NewBufferString(input)
 	}
-	// Never return arbitrary host-rule text from nft's stderr.
-	data, err := cmd.Output()
+	// Do not promote bytes.Buffer.ReadFrom: io.Copy would bypass Write's cap.
+	var data nftOutput
+	cmd.Stdout = &data
+	cmd.Stderr = io.Discard
+	err = cmd.Run()
+	if data.exceeded {
+		return nil, nftsnapshot.ErrTooLarge
+	}
 	if err != nil {
 		return nil, fmt.Errorf("UDP port hopping nftables operation failed; verify root/CAP_NET_ADMIN, kernel NAT support and nftables syntax (existing rules were not replaced): %w", err)
 	}
-	return data, nil
+	return data.buffer.Bytes(), nil
 }
 
-func (linuxSystem) snapshot() ([]byte, error) { return nft("", "-j", "list", "ruleset") }
+type nftOutput struct {
+	buffer   bytes.Buffer
+	exceeded bool
+}
+
+func (b *nftOutput) Write(data []byte) (int, error) {
+	if len(data) > nftsnapshot.MaxOutput-b.buffer.Len() {
+		b.exceeded = true
+		return 0, nftsnapshot.ErrTooLarge
+	}
+	return b.buffer.Write(data)
+}
+
+func (linuxSystem) snapshot() ([]byte, error) {
+	return nftsnapshot.Read(func(args ...string) ([]byte, error) { return nft("", args...) })
+}
 func (linuxSystem) apply(script string) error {
 	_, err := nft(script, "-f", "-")
 	return err

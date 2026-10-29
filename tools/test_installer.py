@@ -118,7 +118,7 @@ printf 'RESULT:%s:%s\n' "$ACTION" "$remaining"
     def test_fixed_release_urls_and_override(self):
         for arch in ("amd64", "arm64"):
             output = self.ok(f'ARCH={arch}; resolve_download_url "xboard-node-linux-$ARCH"; echo "$DOWNLOAD_URL"')
-            self.assertIn(f"/ksr-v/Xboard-Node--Custom-Source/releases/download/v1.13-orphan.8/xboard-node-linux-{arch}", output)
+            self.assertIn(f"/ksr-v/Xboard-Node--Custom-Source/releases/download/v1.13-orphan.9/xboard-node-linux-{arch}", output)
             self.assertNotIn("latest", output)
         output = self.ok('parse_args --version custom --download-base https://assets.example.com/releases; '
                          'resolve_download_url xbctl-linux-amd64; echo "$DOWNLOAD_URL"')
@@ -141,7 +141,7 @@ printf 'RESULT:%s:%s\n' "$ACTION" "$remaining"
                             stage.mkdir()
                             marker = stage / "executed"
                             result = self.shell(f'''
-ARCH={arch}; ENDPOINT_TRUST={trust}; RELEASE_VERSION=v1.13-orphan.8
+ARCH={arch}; ENDPOINT_TRUST={trust}; RELEASE_VERSION=v1.13-orphan.9
 TMP_DIR="$TASK_INTEGRITY_STAGE"
 BINARY_SOURCE="$TASK_TAMPERED_PROGRAM"; CLI_BINARY_SOURCE="$TASK_TAMPERED_PROGRAM"
 if stage_{"binary" if kind == "node" else "xbctl"}; then echo UNSAFE_ACCEPTED; exit 91; fi
@@ -165,7 +165,7 @@ if verify_endpoint_binary node /nonexistent-fixture-binary; then echo UNSAFE_ACC
 echo RELEASE_REFUSED
 ''')
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn("can only verify v1.13-orphan.8 assets", result.stdout)
+                    self.assertIn("can only verify v1.13-orphan.9 assets", result.stdout)
                     self.assertIn("RELEASE_REFUSED", result.stdout)
                     self.assertNotIn("UNSAFE_ACCEPTED", result.stdout)
 
@@ -211,7 +211,7 @@ chmod() { :; }; cp() { echo UNEXPECTED_LOCAL_COPY; }
 stage_xbctl
 ''', env={"TASK_LOCAL_DIR": Path(directory).as_posix()})
             self.assertIn("DOWNLOAD:", result.stdout)
-            self.assertIn("/download/v1.13-orphan.8/xbctl-linux-amd64", result.stdout)
+            self.assertIn("/download/v1.13-orphan.9/xbctl-linux-amd64", result.stdout)
             self.assertNotIn("UNEXPECTED_LOCAL_COPY", result.stdout)
             self.assertNotEqual(result.returncode, 0)
 

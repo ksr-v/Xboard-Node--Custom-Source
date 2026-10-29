@@ -135,6 +135,38 @@ func filteredSave(t *testing.T, tool string) string {
 // It verifies real packets and all four iptables compatibility backends together.
 func TestManagedInputNetwork(t *testing.T) {
 	client := netnsGuard(t)
+	if os.Getenv("XB_NETNS_FILTER_BACKEND") == "legacy" {
+		compatTools = []string{"iptables-legacy", "ip6tables-legacy"}
+	}
+	if !t.Run("empty_namespace_nat_bootstrap", func(t *testing.T) {
+		nc := config(17443, "")
+		nc.PortHopping = &model.PortHopping{Start: 17443, End: 19443}
+		nat := portforward.New("netns-empty-bootstrap")
+		defer nat.Close()
+		if err := nat.Update(nc); err != nil {
+			t.Fatal(err)
+		}
+		if err := nat.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}) {
+		t.Fatal("empty namespace NAT bootstrap failed")
+	}
+	if !t.Run("empty_namespace_input_bootstrap", func(t *testing.T) {
+		m := inputfirewall.New("netns-empty-input-bootstrap")
+		defer m.Close()
+		if err := m.Update(config(17443, "")); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Update(config(17443, "")); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}) {
+		t.Fatal("empty namespace INPUT bootstrap failed")
+	}
 	original := make(map[string]string)
 	for _, tool := range compatTools {
 		command(t, tool, "-N", "FOREIGN_KEEP")

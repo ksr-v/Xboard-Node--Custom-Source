@@ -186,7 +186,7 @@ func acmeFingerprint(cfg config.CertConfig) string {
 	var b strings.Builder
 	b.WriteString(strings.ToLower(strings.TrimSpace(cfg.CertMode)))
 	b.WriteByte('|')
-	b.WriteString(strings.TrimSpace(cfg.Domain))
+	b.WriteString(canonicalACMEDomain(cfg.Domain))
 	b.WriteByte('|')
 	b.WriteString(strings.TrimSpace(cfg.Email))
 	b.WriteByte('|')
@@ -200,6 +200,14 @@ func acmeFingerprint(cfg config.CertConfig) string {
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+// canonicalACMEDomain matches CertMagic's managed-name and storage-key casing.
+// Normalize before CSR creation too: an ACME server can lowercase DNS order
+// identifiers, while acmez compares those identifiers with the CSR exactly.
+// Preserve wildcard, trailing-dot and IP syntax; their validation is unchanged.
+func canonicalACMEDomain(domain string) string {
+	return strings.ToLower(strings.TrimSpace(domain))
 }
 
 // resolveModeFor mirrors (*Manager).resolveMode() for an arbitrary cfg, used
@@ -391,13 +399,15 @@ func (m *Manager) startContent() error {
 // ─── Mode: http / dns (ACME) ──────────────────────────────────────────────
 
 func (m *Manager) startACME(ctx context.Context, dnsSolver *certmagic.DNS01Solver) error {
+	domain := canonicalACMEDomain(m.cfg.Domain)
+	if domain == "" {
+		return fmt.Errorf("cert.domain is required for ACME modes (http/dns)")
+	}
+	m.cfg.Domain = domain
+
 	// Idempotent for unchanged config: Reconfigure already tore down stale ACME state.
 	if m.acmeStarted {
 		return nil
-	}
-
-	if m.cfg.Domain == "" {
-		return fmt.Errorf("cert.domain is required for ACME modes (http/dns)")
 	}
 
 	if err := os.MkdirAll(m.cfg.CertDir, 0o755); err != nil {
@@ -427,12 +437,12 @@ func (m *Manager) startACME(ctx context.Context, dnsSolver *certmagic.DNS01Solve
 			if issuerKey == "" {
 				return nil
 			}
-			if err := m.loadPEMFromStorage(evtCtx, storage, issuerKey, m.cfg.Domain); err != nil {
+			if err := m.loadPEMFromStorage(evtCtx, storage, issuerKey, domain); err != nil {
 				nlog.Core().Error("failed to reload cert after renewal", "error", err)
 				return nil
 			}
 			m.renewed.Store(true)
-			nlog.Core().Info("TLS certificate reloaded after renewal", "domain", m.cfg.Domain)
+			nlog.Core().Info("TLS certificate reloaded after renewal", "domain", domain)
 			return nil
 		},
 	})
@@ -465,18 +475,18 @@ func (m *Manager) startACME(ctx context.Context, dnsSolver *certmagic.DNS01Solve
 	// Derived ctx so Reconfigure can cancel ACME background goroutines.
 	acmeCtx, acmeCancel := context.WithCancel(ctx)
 
-	if err := magic.ObtainCertSync(acmeCtx, m.cfg.Domain); err != nil {
+	if err := magic.ObtainCertSync(acmeCtx, domain); err != nil {
 		acmeCancel()
 		return fmt.Errorf("obtain certificate: %w", err)
 	}
 
 	issuerKey := magic.Issuers[0].IssuerKey()
-	if err := m.loadPEMFromStorage(acmeCtx, storage, issuerKey, m.cfg.Domain); err != nil {
+	if err := m.loadPEMFromStorage(acmeCtx, storage, issuerKey, domain); err != nil {
 		acmeCancel()
 		return fmt.Errorf("load cert from storage: %w", err)
 	}
 
-	if err := magic.ManageAsync(acmeCtx, []string{m.cfg.Domain}); err != nil {
+	if err := magic.ManageAsync(acmeCtx, []string{domain}); err != nil {
 		acmeCancel()
 		return fmt.Errorf("start cert manager: %w", err)
 	}
@@ -527,6 +537,7 @@ func (m *Manager) newDNSProvider() (certmagic.DNSProvider, error) {
 // loadPEMFromStorage reads cert + key for domain from certmagic storage into
 // the in-memory cache. Single entry point for both initial load and renewal refresh.
 func (m *Manager) loadPEMFromStorage(ctx context.Context, storage certmagic.Storage, issuerKey, domain string) error {
+	domain = canonicalACMEDomain(domain)
 	if issuerKey == "" || domain == "" {
 		return fmt.Errorf("loadPEMFromStorage: issuerKey and domain are required")
 	}

@@ -198,12 +198,15 @@ func TestNativeInspectionAndRestoreCommandsAreBoundedAndShellFree(t *testing.T) 
 	}
 	s.run = func(path string, args []string, input string) ([]byte, error) {
 		calls++
-		if path != "/trusted/nft" || strings.Join(args, " ") != "-j list ruleset" || input != "" {
+		if path == "/trusted/nft" && strings.Join(args, " ") == "--version" {
+			return []byte("nftables v1.0.9 (Old Doc Yak #3)"), nil
+		}
+		if path != "/trusted/nft" || strings.Join(args, " ") != "-j -nn list ruleset" || input != "" {
 			t.Fatal("unexpected nft operation", path, args)
 		}
 		return []byte(`{"nftables":[{"chain":{"family":"ip","table":"filter","name":"INPUT","type":"filter","hook":"input","prio":0}}]}`), nil
 	}
-	if err := s.checkNative(); err != nil || !s.nftFamilies[4] || calls != 1 {
+	if err := s.checkNative(); err != nil || !s.nftFamilies[4] || calls != 2 {
 		t.Fatal(err)
 	}
 	s.run = func(path string, args []string, input string) ([]byte, error) {
@@ -214,6 +217,114 @@ func TestNativeInspectionAndRestoreCommandsAreBoundedAndShellFree(t *testing.T) 
 	}
 	if err := s.apply(backend{restore: "/trusted/iptables-nft-restore"}, "*filter\nCOMMIT\n"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEmptyNftJSONGuardBeforeInputManagement(t *testing.T) {
+	for name, response := range map[string]struct {
+		json, tables string
+		failTables   bool
+		want         error
+		calls        int
+	}{
+		"confirmed-empty":          {"", "", false, nil, 2},
+		"confirmed-whitespace":     {" \n", "\t\n", false, nil, 2},
+		"populated-tables":         {"", "table ip existing\n", false, errRules, 2},
+		"failed-table-query":       {"", "", true, errRules, 2},
+		"bare-null-is-not-empty":   {"null", "", false, errRules, 1},
+		"legacy-null-confirmed":    {`{"nftables":null}`, "", false, nil, 2},
+		"legacy-null-populated":    {`{"nftables":null}`, "table ip existing\n", false, errRules, 2},
+		"missing-key-is-not-empty": {"{}", "", false, errRules, 1},
+		"malformed-is-not-empty":   {"not JSON", "", false, errRules, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := fakeLinuxTools()
+			calls := 0
+			s.lookup = func(string) (string, error) { return "/trusted/nft", nil }
+			s.run = func(path string, args []string, input string) ([]byte, error) {
+				calls++
+				if input != "" {
+					t.Fatal("inventory supplied mutation input")
+				}
+				switch strings.Join(args, " ") {
+				case "--version":
+					return []byte("nftables v1.0.9"), nil
+				case "-j -nn list ruleset":
+					return []byte(response.json), nil
+				case "list tables":
+					if response.failTables {
+						return nil, errors.New("private diagnostic")
+					}
+					return []byte(response.tables), nil
+				default:
+					t.Fatal("unexpected inventory command", args)
+					return nil, errOperation
+				}
+			}
+			if err := s.checkNative(); err != response.want || calls != response.calls+1 {
+				t.Fatal("guard result", err, calls)
+			}
+		})
+	}
+}
+
+func TestExactOldNFTSelectsLegacyWithoutChangingDefaultNFTAlias(t *testing.T) {
+	s, _ := fakeLinuxTools()
+	s.legacyNFT = true
+	s.nftFamilies = map[int]bool{}
+	s.legacy = func(int) bool { return false }
+	found, err := s.discover()
+	if err != nil || len(found) != 2 {
+		t.Fatal(found, err)
+	}
+	for _, b := range found {
+		if b.kind != "legacy" || !strings.HasSuffix(b.command, "-legacy") {
+			t.Fatal("old nft activated unused NFT filter", b)
+		}
+	}
+}
+
+func TestOldNFTMissingLegacyToolsRefusesBeforeMutation(t *testing.T) {
+	s, tools := fakeLinuxTools()
+	s.legacyNFT = true
+	s.nftFamilies = map[int]bool{}
+	for name := range tools {
+		if strings.Contains(name, "legacy") {
+			delete(tools, name)
+		}
+	}
+	if _, err := s.discover(); err != errUnavailable {
+		t.Fatal("missing explicit legacy silently used default NFT", err)
+	}
+}
+
+func TestKnownOldActiveNFTInputIsRejectedBeforeMutation(t *testing.T) {
+	s, _ := fakeLinuxTools()
+	s.lookup = func(string) (string, error) { return "/trusted/nft", nil }
+	s.run = func(_ string, args []string, input string) ([]byte, error) {
+		if input != "" {
+			t.Fatal("native inventory attempted write")
+		}
+		switch strings.Join(args, " ") {
+		case "--version":
+			return []byte("nftables v0.9.0 (Fearless Fosdick)"), nil
+		case "-j -nn list ruleset":
+			return []byte(`{"nftables":[{"chain":{"family":"ip","table":"filter","name":"INPUT","type":"filter","hook":"input","prio":0}}]}`), nil
+		default:
+			t.Fatal(args)
+			return nil, errOperation
+		}
+	}
+	if err := s.checkNative(); err != errLegacyNFT {
+		t.Fatal("old NFT compatibility hook silently managed", err)
+	}
+}
+
+func TestLegacyNFTFeaturePolicyRecognizesOnlyConfirmedVersion(t *testing.T) {
+	for text, want := range map[string]bool{"nftables v0.9.0 (Fearless Fosdick)": true, "nftables v1.0.9": false, "nftables v0.9.01": false, "nftables v0.9.0-custom": false, "unknown v0.9.0": false, "": false} {
+		if isLegacyNFT([]byte(text)) != want {
+			t.Fatal("version policy guessed", text)
+		}
 	}
 }
 

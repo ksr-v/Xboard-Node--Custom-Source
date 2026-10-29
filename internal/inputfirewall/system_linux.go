@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cedar2025/xboard-node/internal/nftsnapshot"
 	"golang.org/x/sys/unix"
 )
 
@@ -22,6 +24,7 @@ type linuxSystem struct {
 	lockPath    string
 	nft         string
 	nftFamilies map[int]bool
+	legacyNFT   bool
 	lookup      func(string) (string, error)
 	run         func(string, []string, string) ([]byte, error)
 	legacy      func(int) bool
@@ -161,8 +164,16 @@ func (s *linuxSystem) checkNative() error {
 	if err != nil {
 		return errUnavailable
 	}
-	data, err := s.run(path, []string{"-j", "list", "ruleset"}, "")
+	version, err := s.run(path, []string{"--version"}, "")
 	if err != nil {
+		return safeError(err)
+	}
+	s.legacyNFT = isLegacyNFT(version)
+	data, err := nftsnapshot.Read(func(args ...string) ([]byte, error) { return s.run(path, args, "") })
+	if err != nil {
+		if errors.Is(err, nftsnapshot.ErrUnconfirmedEmpty) || errors.Is(err, nftsnapshot.ErrTooLarge) {
+			return errRules
+		}
 		return safeError(err)
 	}
 	if err = inspectNft(data); err != nil {
@@ -192,7 +203,18 @@ func (s *linuxSystem) checkNative() error {
 			}
 		}
 	}
+	if s.legacyNFT && len(s.nftFamilies) > 0 {
+		return errLegacyNFT
+	}
 	return nil
+}
+
+func isLegacyNFT(version []byte) bool {
+	if len(version) > 4096 {
+		return false
+	}
+	parts := strings.Fields(string(version))
+	return len(parts) >= 2 && parts[0] == "nftables" && parts[1] == "v0.9.0"
 }
 
 func (s *linuxSystem) discover() ([]backend, error) {
@@ -228,7 +250,15 @@ func (s *linuxSystem) discover() ([]backend, error) {
 		if family == 6 {
 			base = "ip6tables"
 		}
-		for _, name := range []string{base + "-nft", base, base + "-legacy"} {
+		candidates := []string{base + "-nft", base, base + "-legacy"}
+		// nft 0.9.0 cannot serialize xt compatibility expressions reliably.
+		// Do not create an unused NFT filter hook that would poison the next
+		// inventory; explicit legacy tools leave global alternatives unchanged.
+		forceLegacy := s.legacyNFT && !s.nftFamilies[family]
+		if forceLegacy {
+			candidates = []string{base + "-legacy"}
+		}
+		for _, name := range candidates {
 			command, err := s.lookup(name)
 			if err != nil {
 				continue
@@ -239,6 +269,9 @@ func (s *linuxSystem) discover() ([]backend, error) {
 			}
 			kind := versionKind(data)
 			if kind == "" {
+				return nil, errUnavailable
+			}
+			if forceLegacy && kind != "legacy" {
 				return nil, errUnavailable
 			}
 			key := backend{family: family, kind: kind}.key()
@@ -271,6 +304,9 @@ func (s *linuxSystem) discover() ([]backend, error) {
 			return nil, errUnavailable
 		}
 		if s.nftFamilies[family] && !seen[backend{family: family, kind: "nft"}.key()] {
+			return nil, errUnavailable
+		}
+		if forceLegacy && !seen[backend{family: family, kind: "legacy"}.key()] {
 			return nil, errUnavailable
 		}
 	}

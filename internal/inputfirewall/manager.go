@@ -27,6 +27,7 @@ var (
 	errOperation    = errors.New("managed Hysteria2 INPUT operation failed; check permissions and firewall reloads")
 	errCompensation = errors.New("managed Hysteria2 INPUT update and owned-rule recovery were incomplete; retry reconciliation")
 	errLease        = errors.New("managed Hysteria2 INPUT is already active in another Node process; use one managed process per network namespace")
+	errLegacyNFT    = errors.New("managed Hysteria2 INPUT cannot safely manage active nftables compatibility INPUT with nft 0.9.0; use manual firewall management")
 )
 
 type backend struct {
@@ -302,7 +303,7 @@ func (m *Manager) desired(l *listener) ownedChain {
 }
 
 func safeError(err error) error {
-	for _, known := range []error{errInvalid, errRules, errOwnership, errUnsupported, errUnavailable, errOperation, errCompensation, errLease} {
+	for _, known := range []error{errInvalid, errRules, errOwnership, errUnsupported, errUnavailable, errOperation, errCompensation, errLease, errLegacyNFT} {
 		if errors.Is(err, known) {
 			return known
 		}
