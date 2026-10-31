@@ -40,6 +40,8 @@ sudo ss -lunp
 
 v10 会兼容读取并迁移**当前实例**的旧表。定向文本读取必须给出完整匹配的所有权 marker，重读 JSON 时还要确认同一 handle 和完整结构。无法证明归属或内容安全时仍停止迁移，不放宽为按表名前缀删除。
 
+本版已在 Debian 12、nftables 1.0.6 的授权测试节点执行标准升级：安装器返回 0，当前实例旧表自动迁移，HY2 与其余三个协议恢复监听，配置、凭据、私有 CA bundle 和 unit 字节摘要保持不变。使用节点原有 Salamander 混淆与证书信任，实际监听口和跳跃范围内两个端口均通过 TLS 校验及 QUIC `h3` 握手。该结果只证明公网 QUIC/TLS 握手，不包含认证后的代理流量。未启用混淆的普通探测会与实际协议不匹配，不能据其超时认定升级失败。
+
 ## 仍有重叠旧规则时
 
 如果日志改为 `conflicts with a possibly overlapping existing NAT rule`，说明当前阻塞点是另一张重叠 NAT 表。先记录日志给出的表名、地址族、链名以及面板当前端口，使用 `nft -a list table` 与 `nft -j list table` 定向读取该表，并在 Root 私有目录保存这张表的文本和 JSON 备份。
