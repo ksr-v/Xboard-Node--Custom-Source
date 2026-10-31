@@ -397,7 +397,7 @@ func TestCrossBackendFailureCompensatesOnlyOwnedSubset(t *testing.T) {
 			n := hy2()
 			n.ServerPort = 17444
 			err := m.Update(n)
-			if err != errOperation || strings.Contains(err.Error(), "secret") {
+			if !errors.Is(err, errOperation) || strings.Contains(err.Error(), "secret") {
 				t.Fatal("unsafe error", err)
 			}
 			for _, b := range backends {
@@ -423,7 +423,7 @@ func TestRecoveryFailureIsExplicit(t *testing.T) {
 	f.failRecovery = true
 	n := hy2()
 	n.ServerPort = 17444
-	if err := m.Update(n); err != errCompensation {
+	if err := m.Update(n); !errors.Is(err, errCompensation) {
 		t.Fatal(err)
 	}
 	f.failRecovery = false
@@ -438,7 +438,7 @@ func TestFirstPartialUpdateStillAllowsCloseCleanup(t *testing.T) {
 	f.failKey = f.backends[0].key()
 	f.failAfter = true
 	f.failRecovery = true
-	if err := m.Update(hy2()); err != errCompensation {
+	if err := m.Update(hy2()); !errors.Is(err, errCompensation) {
 		t.Fatal(err)
 	}
 	if !m.registered || len(ownedAt(t, f, f.backends[0])) != 1 {
@@ -551,7 +551,7 @@ func TestUnavailableUnsupportedAndUnusedClose(t *testing.T) {
 	}
 	m, f := newFake(t, "native")
 	f.nativeErr = errUnsupported
-	if m.Update(hy2()) != errUnsupported || len(f.scripts) != 0 {
+	if !errors.Is(m.Update(hy2()), errUnsupported) || len(f.scripts) != 0 {
 		t.Fatal("unsupported host changed")
 	}
 }

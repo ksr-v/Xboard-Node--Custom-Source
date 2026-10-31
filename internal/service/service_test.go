@@ -16,6 +16,8 @@ import (
 
 type fakeKernel struct {
 	running bool
+	runtime []kernel.Inbound
+	onStart func()
 
 	startErr  error
 	updateErr error
@@ -42,10 +44,14 @@ func (f *fakeKernel) Capabilities() kernel.Capabilities { return kernel.Capabili
 func (f *fakeKernel) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
 	_, _, _ = nodeConfig, users, tls
 	f.startCalls++
+	if f.onStart != nil {
+		f.onStart()
+	}
 	if f.startErr != nil {
 		return f.startErr
 	}
 	f.running = true
+	f.runtime = fakeRuntime(nodeConfig)
 	return nil
 }
 func (f *fakeKernel) Stop()           { f.running = false }
@@ -53,7 +59,26 @@ func (f *fakeKernel) IsRunning() bool { return f.running }
 func (f *fakeKernel) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
 	_, _, _ = nodeConfig, users, tls
 	f.reloadCalls++
+	if f.reloadErr == nil {
+		f.runtime = fakeRuntime(nodeConfig)
+	}
 	return f.reloadErr
+}
+func (f *fakeKernel) RuntimeInbounds() ([]kernel.Inbound, error) {
+	if !f.running {
+		return nil, nil
+	}
+	return append([]kernel.Inbound(nil), f.runtime...), nil
+}
+func fakeRuntime(n *model.NodeSpec) []kernel.Inbound {
+	if n == nil {
+		return nil
+	}
+	transport := "tcp"
+	if n.Protocol == "hysteria" || n.Protocol == "tuic" {
+		transport = "udp"
+	}
+	return []kernel.Inbound{{Protocol: n.Protocol, Transport: transport, ListenAddress: "::", ListenPort: n.ServerPort}}
 }
 func (f *fakeKernel) AddUsers(users []model.UserSpec) (int, error) {
 	f.addCalls++

@@ -167,18 +167,22 @@ func owned(s *snapshot) (map[string]ownedChain, error) {
 		if !strings.HasPrefix(name, chainPrefix) {
 			continue
 		}
-		if len(name) != len(chainPrefix)+20 || !lowerHex(name[len(chainPrefix):], 20) || entry.policy != "-" || len(entry.rules) != 2 {
+		if len(name) != len(chainPrefix)+20 || !lowerHex(name[len(chainPrefix):], 20) || entry.policy != "-" || len(entry.rules) > 4097 {
 			return nil, errOwnership
 		}
-		allow, ok := parseOwned(entry.rules[0], "ACCEPT")
-		if !ok {
-			return nil, errOwnership
+		marker := ""
+		for _, rule := range entry.rules {
+			target := jumpTarget(rule)
+			if target != "ACCEPT" && target != "RETURN" {
+				return nil, errOwnership
+			}
+			value, ok := parseOwned(rule, target)
+			if !ok || !markerNamesChain(value.marker, name) || marker != "" && marker != value.marker {
+				return nil, errOwnership
+			}
+			marker = value.marker
 		}
-		ret, ok := parseOwned(entry.rules[1], "RETURN")
-		if !ok || allow.marker != ret.marker || name != chainPrefix+strings.TrimPrefix(allow.marker, markerPrefix)[:20] {
-			return nil, errOwnership
-		}
-		result[name] = ownedChain{name: name, marker: allow.marker, rules: entry.rules}
+		result[name] = ownedChain{name: name, marker: marker, rules: entry.rules}
 	}
 	for source, entry := range s.chains {
 		for position, rule := range entry.rules {
@@ -197,19 +201,36 @@ func owned(s *snapshot) (map[string]ownedChain, error) {
 				continue
 			}
 			owner, exists := result[referenced]
-			if !exists || source != "INPUT" || !isJump(rule, owner.marker, referenced) {
+			marker := ""
+			for i := 0; i+1 < len(rule); i++ {
+				if rule[i] == "--comment" {
+					marker = rule[i+1]
+				}
+			}
+			if !exists || source != "INPUT" || !markerNamesChain(marker, referenced) || owner.marker != "" && marker != owner.marker || !isJump(rule, marker, referenced) {
 				return nil, errOwnership
 			}
+			owner.marker = marker
 			owner.jumps = append(owner.jumps, rule)
 			owner.positions = append(owner.positions, position+1)
 			result[referenced] = owner
 		}
 	}
+	for _, entry := range result {
+		if entry.marker == "" {
+			return nil, errOwnership
+		}
+	}
 	return result, nil
+}
+
+func markerNamesChain(marker, name string) bool {
+	return validMarker(marker) && name == chainPrefix+strings.TrimPrefix(marker, markerPrefix)[:20]
 }
 
 type ownedRule struct {
 	marker, address string
+	transport       string
 	port            int
 }
 
@@ -224,7 +245,7 @@ func parseOwned(tokens []string, target string) (ownedRule, bool) {
 		}
 		key, arg := tokens[i], tokens[i+1]
 		if key == "-m" {
-			if modules[arg] || (arg != "udp" && arg != "comment") {
+			if modules[arg] || (arg != "udp" && arg != "tcp" && arg != "comment") {
 				return value, false
 			}
 			modules[arg] = true
@@ -270,7 +291,8 @@ func parseOwned(tokens []string, target string) (ownedRule, bool) {
 	if target == "RETURN" {
 		return value, len(seen) == 2 && len(modules) == 1
 	}
-	return value, protocol == "udp" && value.port > 0 && modules["udp"] && len(modules) == 2 && (len(seen) == 4 || len(seen) == 5 && value.address != "")
+	value.transport = protocol
+	return value, (protocol == "udp" || protocol == "tcp") && value.port > 0 && modules[protocol] && len(modules) == 2 && (len(seen) == 4 || len(seen) == 5 && value.address != "")
 }
 
 func validMarker(marker string) bool {
@@ -308,10 +330,14 @@ func isJump(tokens []string, marker, name string) bool {
 }
 
 func sameBody(a, b ownedChain) bool {
-	if a.name != b.name || a.marker != b.marker || len(a.rules) != 2 || len(b.rules) != 2 {
+	if a.name != b.name || a.marker != b.marker || len(a.rules) != len(b.rules) || len(a.rules) < 2 {
 		return false
 	}
-	for i, target := range []string{"ACCEPT", "RETURN"} {
+	for i := range a.rules {
+		target := "ACCEPT"
+		if i == len(a.rules)-1 {
+			target = "RETURN"
+		}
 		x, xok := parseOwned(a.rules[i], target)
 		y, yok := parseOwned(b.rules[i], target)
 		if !xok || !yok || !reflect.DeepEqual(x, y) {
@@ -319,6 +345,16 @@ func sameBody(a, b ownedChain) bool {
 		}
 	}
 	return true
+}
+
+func externallyManaged(s *snapshot) bool {
+	for name := range s.chains {
+		lower := strings.ToLower(name)
+		if strings.HasPrefix(lower, "ufw-") || strings.HasPrefix(lower, "ufw6-") || strings.HasPrefix(lower, "firewalld") {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectNft(data []byte) error {

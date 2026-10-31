@@ -1,6 +1,6 @@
 # 使用 node 管理节点
 
-本说明对应 **v1.13-orphan.10** 的 Node、xbctl 和安装器。旧版可按[固定版本更新教程](UPGRADE-v1.13-orphan.10.zh-CN.md)执行 `upgrade`，配套更新菜单与配置编辑器；已有新版菜单也可输入 `node` 选 **1**，确认目标正式版本后更新。不要用新机安装或 `REPLACE` 来完成普通升级。本版修复 nftables 1.0.6 的旧表所有权注释兼容和自动迁移问题，管理菜单的操作范围不变。
+本说明对应 **v1.13-orphan.11** 发布候选的 Node、xbctl 和安装器，待专用虚拟机验证最终构建通过后发布。正式发布后，旧版可按[固定版本更新教程](UPGRADE-v1.13-orphan.11.zh-CN.md)执行 `upgrade`，配套更新菜单与配置编辑器；已有新版菜单也可输入 `node` 选 **1**，确认目标正式版本后更新。不要用新机安装或 `REPLACE` 来完成普通升级。本版增加运行入站 TCP/UDP 防火墙管理、自愈和本机诊断，保留 v10 的 nftables 1.0.6 旧 NAT 归属兼容与管理菜单操作范围。
 
 在标准 Linux/systemd 安装的 Bash SSH 终端输入小写 `node`：
 
@@ -47,6 +47,23 @@
 
 ## 版本与验证范围
 
-v10 正式源码、程序版本、安装器固定摘要及实际执行的回归范围以 [v10 发行说明](RELEASE-v1.13-orphan.10.md)和同版 `VERIFICATION.json` 为准。更新后用 `xboard-node -v` 与 `xbctl version` 核对版本；进程 active 不代替真实代理连接与证书验收。
+v11 源码、程序版本、安装器固定摘要及实际执行的回归范围以 [v11 发行说明](RELEASE-v1.13-orphan.11.md)和同版 `VERIFICATION.json` 为准。发布前使用本地 Debian 12 测试虚拟机验证最终字节，不能称为 Debian 13 现场验收。更新后用 `xboard-node -v` 与 `xbctl version` 核对版本；进程 active 不代替真实代理连接与证书验收。
 
-历史管理功能验证（2026-10-28，v7）：Windows Go 配置编辑／TLS／重定向／凭据隔离测试、原26项安装器检查（25通过、1外部镜像路径跳过）、新7项管理检查通过；专用 Linux VM 13项真实 PTY/systemd/Node/SQLite 面板检查通过，Linux 五个相关包生产 tags `-race` 通过。在线升级使用固定摘要的受控 Release 样本 `v9.99.0`（仅测试，未公开发布），日志菜单仅用哨兵检查范围。这些历史结果不计入 v10 回归，也不能证明公网生产升级、原生 ARM64 代理流量、商业客户端或生产面板迁移。
+历史管理功能验证（2026-10-28，v7）：Windows Go 配置编辑／TLS／重定向／凭据隔离测试、原26项安装器检查（25通过、1外部镜像路径跳过）、新7项管理检查通过；专用 Linux VM 13项真实 PTY/systemd/Node/SQLite 面板检查通过，Linux 五个相关包生产 tags `-race` 通过。在线升级使用固定摘要的受控 Release 样本 `v9.99.0`（仅测试，未公开发布），日志菜单仅用哨兵检查范围。这些历史结果不计入 v11 回归，也不能证明公网生产升级、原生 ARM64 代理流量、商业客户端或生产面板迁移。
+
+## 运行入站防火墙诊断
+
+以 root 查询运行中的 Node，不需要修改面板配置或开启 HTTP 健康端口：
+
+```bash
+sudo xboard-node firewall status
+sudo xboard-node firewall ports
+sudo xboard-node firewall check
+sudo xboard-node firewall diagnose --output json
+sudo xboard-node firewall repair
+# xbctl firewall 支持相同子命令
+```
+
+前四项只读；`check` 发现未解决问题时返回非零。只有显式 `repair` 修复已经获得本地管理授权的实例，修复后仍有问题也返回非零。命令通过 root 私有 Unix socket 查询实际运行注册表，服务未运行时返回 unavailable，不从历史文件或面板期望配置冒充当前监听。
+
+VLESS TCP 25444 等任意有效实际监听端口与443采用相同的动态路径。端口被成功应用后才自动生成权限，修改端口后同步更新。输出分别显示 Node 自有权限和可证明的本地 INPUT 判定；缺失自有规则不等于一定被宿主阻断，复杂规则报告 unknown。UFW、firewalld、额外原生 nft INPUT 或未知所有权冲突需要管理员协调。完整权限、持久化及回滚边界见 [Firewall Manager](FIREWALL-MANAGER.zh-CN.md)。

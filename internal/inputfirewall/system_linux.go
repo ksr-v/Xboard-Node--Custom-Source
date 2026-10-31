@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,15 +21,16 @@ import (
 )
 
 type linuxSystem struct {
-	fd          int
-	lockPath    string
-	nft         string
-	nftFamilies map[int]bool
-	legacyNFT   bool
-	lookup      func(string) (string, error)
-	run         func(string, []string, string) ([]byte, error)
-	legacy      func(int) bool
-	ipv6        func() bool
+	fd              int
+	lockPath        string
+	nft             string
+	nftFamilies     map[int]bool
+	legacyNFT       bool
+	inventoryNative string
+	lookup          func(string) (string, error)
+	run             func(string, []string, string) ([]byte, error)
+	legacy          func(int) bool
+	ipv6            func() bool
 }
 
 func newSystem() system {
@@ -160,6 +162,9 @@ func trustedExecutable(path string) error {
 // Inspect all nft INPUT filter base chains before installing any permission.
 // An ACCEPT in a separate compatibility chain cannot override their DROP.
 func (s *linuxSystem) checkNative() error {
+	s.inventoryNative = "unknown"
+	s.nftFamilies = make(map[int]bool)
+	s.legacyNFT = false
 	path, err := s.lookup("nft")
 	if err != nil {
 		return errUnavailable
@@ -177,8 +182,12 @@ func (s *linuxSystem) checkNative() error {
 		return safeError(err)
 	}
 	if err = inspectNft(data); err != nil {
+		if errors.Is(err, errUnsupported) {
+			s.inventoryNative = "present"
+		}
 		return err
 	}
+	s.inventoryNative = "absent"
 	s.nft = path
 	s.nftFamilies = make(map[int]bool)
 	var top struct {
@@ -207,6 +216,28 @@ func (s *linuxSystem) checkNative() error {
 		return errLegacyNFT
 	}
 	return nil
+}
+
+func platformInventory() InventoryStatus {
+	result := InventoryStatus{NativeNFT: "unknown", Issues: []string{}}
+	s := newSystem().(*linuxSystem)
+	_, nftErr := s.lookup("nft")
+	result.NFTToolPresent = nftErr == nil
+	for _, name := range []string{"iptables-nft", "ip6tables-nft"} {
+		if _, err := s.lookup(name); err == nil {
+			result.IPTablesNFTPresent = true
+		}
+	}
+	for _, name := range []string{"iptables-legacy", "ip6tables-legacy"} {
+		if _, err := s.lookup(name); err == nil {
+			result.IPTablesLegacyPresent = true
+		}
+	}
+	if err := s.checkNative(); err != nil {
+		result.Issues = append(result.Issues, safeError(err).Error())
+	}
+	result.NativeNFT = s.inventoryNative
+	return result
 }
 
 func isLegacyNFT(version []byte) bool {
@@ -274,6 +305,11 @@ func (s *linuxSystem) discover() ([]backend, error) {
 			if forceLegacy && kind != "legacy" {
 				return nil, errUnavailable
 			}
+			// Existing hooks decide the write scope. An installed nft tool is
+			// not evidence that the nft hook participates in a legacy-only host.
+			if (legacyActive[family] || s.nftFamilies[family]) && ((kind == "nft" && !s.nftFamilies[family]) || (kind == "legacy" && !legacyActive[family])) {
+				continue
+			}
 			key := backend{family: family, kind: kind}.key()
 			if seen[key] {
 				continue
@@ -299,6 +335,11 @@ func (s *linuxSystem) discover() ([]backend, error) {
 			}
 			seen[key] = true
 			result = append(result, backend{family: family, kind: kind, command: command, save: save, restore: restore})
+			// With no filter hook yet, bootstrap one available backend, without
+			// changing system alternatives or activating a second empty hook.
+			if !legacyActive[family] && !s.nftFamilies[family] {
+				break
+			}
 		}
 		if legacyActive[family] && !seen[backend{family: family, kind: "legacy"}.key()] {
 			return nil, errUnavailable
@@ -386,8 +427,27 @@ func runCommand(path string, args []string, input string) ([]byte, error) {
 	var output limitedOutput
 	cmd.Stdout = &output
 	cmd.Stderr = io.Discard // Host rules, command paths and diagnostic text are private.
-	if cmd.Run() != nil || output.exceeded {
-		return nil, errOperation
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil, phaseError("command timed out", errOperation)
+	}
+	if output.exceeded {
+		return nil, phaseError("command output limit exceeded", errOperation)
+	}
+	if err != nil {
+		var exited *exec.ExitError
+		switch {
+		case errors.As(err, &exited):
+			return nil, phaseError("command exited with code "+strconv.Itoa(exited.ExitCode()), errOperation)
+		case errors.Is(err, exec.ErrNotFound), errors.Is(err, os.ErrNotExist):
+			return nil, phaseError("command executable not found", errOperation)
+		case errors.Is(err, os.ErrPermission):
+			return nil, phaseError("command execution permission denied", errOperation)
+		case errors.Is(err, exec.ErrWaitDelay):
+			return nil, phaseError("command output pipe deadline exceeded", errOperation)
+		default:
+			return nil, phaseError("command could not start or complete", errOperation)
+		}
 	}
 	return output.Bytes(), nil
 }

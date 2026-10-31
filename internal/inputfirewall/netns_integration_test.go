@@ -118,6 +118,49 @@ except OSError:
 	return strings.TrimSpace(out) == "yes"
 }
 
+func echoTCP(t *testing.T, family, address string, port int) {
+	t.Helper()
+	l, err := net.Listen(family, net.JoinHostPort(address, strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				var b [128]byte
+				n, err := c.Read(b[:])
+				if err == nil {
+					_, _ = c.Write(b[:n])
+				}
+			}()
+		}
+	}()
+}
+
+func probeTCP(t *testing.T, client string, family, port int) bool {
+	t.Helper()
+	code := `import socket,sys
+family,port=map(int,sys.argv[1:])
+s=socket.socket(socket.AF_INET if family==4 else socket.AF_INET6,socket.SOCK_STREAM)
+s.settimeout(0.65)
+try:
+ s.connect(('10.253.30.1' if family==4 else 'fd00:253:30::1',port))
+ s.sendall(b'tcp-runtime-probe')
+ print('yes' if s.recv(128)==b'tcp-runtime-probe' else 'no')
+except OSError:
+ print('no')
+finally:
+ s.close()
+`
+	return strings.TrimSpace(command(t, "nsenter", "--target", client, "--net", "python3", "-c", code, strconv.Itoa(family), strconv.Itoa(port))) == "yes"
+}
+
 func filteredSave(t *testing.T, tool string) string {
 	t.Helper()
 	var lines []string
@@ -217,6 +260,43 @@ func TestManagedInputNetwork(t *testing.T) {
 		}
 		if probe(t, client, 4, 17444, 17444) || probe(t, client, 6, 17444, 17444) {
 			t.Fatal("unmanaged listening UDP port was opened")
+		}
+	})
+	t.Run("runtime_tcp_and_udp_hundred_repairs_port_change", func(t *testing.T) {
+		for _, port := range []int{443, 8443} {
+			echoTCP(t, "tcp4", "0.0.0.0", port)
+			echoTCP(t, "tcp6", "::", port)
+		}
+		tcp := inputfirewall.New("netns-runtime-tcp")
+		defer tcp.Close()
+		listeners := []inputfirewall.Listener{{Protocol: "vless", Transport: "tcp", ListenPort: 443}, {Protocol: "hysteria2", Transport: "udp", ListenPort: 17443}}
+		if probeTCP(t, client, 4, 443) {
+			t.Fatal("unmanaged TCP listener passed terminal REJECT")
+		}
+		for range 100 {
+			if err := tcp.UpdateListeners(listeners); err != nil {
+				t.Fatal(err)
+			}
+			s, err := tcp.CheckListeners(listeners)
+			if err != nil || !s.Healthy {
+				t.Fatal(s, err)
+			}
+		}
+		if !probeTCP(t, client, 4, 443) || !probeTCP(t, client, 6, 443) || !probe(t, client, 4, 17443, 17443) || probeTCP(t, client, 4, 8443) {
+			t.Fatal("runtime TCP/UDP scope incorrect")
+		}
+		listeners[0].ListenPort = 8443
+		if err := tcp.UpdateListeners(listeners); err != nil {
+			t.Fatal(err)
+		}
+		if probeTCP(t, client, 4, 443) || !probeTCP(t, client, 4, 8443) || !probeTCP(t, client, 6, 8443) {
+			t.Fatal("TCP port update retained stale grant")
+		}
+		if err := tcp.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if probeTCP(t, client, 4, 8443) || !probe(t, client, 4, 17443, 17443) {
+			t.Fatal("TCP owner cleanup affected sibling UDP")
 		}
 	})
 	t.Run("idempotent_and_multiple_owners", func(t *testing.T) {

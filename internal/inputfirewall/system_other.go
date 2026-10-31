@@ -10,3 +10,7 @@ func (unsupportedSystem) discover() ([]backend, error) { return nil, errUnavaila
 func (unsupportedSystem) checkNative() error           { return errUnavailable }
 func (unsupportedSystem) read(backend) ([]byte, error) { return nil, errUnavailable }
 func (unsupportedSystem) apply(backend, string) error  { return errUnavailable }
+
+func platformInventory() InventoryStatus {
+	return InventoryStatus{NativeNFT: "unknown", Issues: []string{errUnavailable.Error()}}
+}

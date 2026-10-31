@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cedar2025/xboard-node/internal/config"
+	"github.com/cedar2025/xboard-node/internal/firewall"
 	"github.com/cedar2025/xboard-node/internal/machine"
 	"github.com/cedar2025/xboard-node/internal/nlog"
 	"github.com/cedar2025/xboard-node/internal/service"
@@ -26,6 +27,13 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "firewall" {
+		if err := firewall.RunCLI(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	configPath := flag.String("c", "config.yml", "config file path")
 	showVersion := flag.Bool("v", false, "show version")
 	flag.Parse()
@@ -56,6 +64,12 @@ func main() {
 
 // runWithReload restarts all node services when the config file changes.
 func runWithReload(initialRoot *config.RootConfig, configPath string) {
+	control, err := firewall.StartControl()
+	if err != nil {
+		nlog.Core().Warn("private firewall control unavailable; node services will continue", "error", err)
+	} else {
+		defer control.Close()
+	}
 	var healthSrv *http.Server
 	var healthPort int
 	startHealth := func(port int) {

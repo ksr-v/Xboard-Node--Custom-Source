@@ -1,11 +1,12 @@
 // Package inputfirewall maintains narrowly scoped INPUT permissions for the
-// Hysteria2 listeners of this Node process. It never persists the host ruleset.
+// running listeners of this Node process. It never persists the host ruleset.
 package inputfirewall
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -19,15 +20,17 @@ const chainPrefix = "XB_IN_"
 const markerPrefix = "xboard-node-input:v1:"
 
 var (
-	errInvalid      = errors.New("managed Hysteria2 INPUT received an invalid listener or owner")
-	errRules        = errors.New("managed Hysteria2 INPUT cannot safely identify the host rules; no unknown resources were changed")
-	errOwnership    = errors.New("managed Hysteria2 INPUT ownership or references conflict; unknown resources were preserved")
-	errUnsupported  = errors.New("managed Hysteria2 INPUT does not support native nftables INPUT chains or firewalld; use manual firewall management")
-	errUnavailable  = errors.New("managed Hysteria2 INPUT requires Linux, root/CAP_NET_ADMIN, nftables and the active iptables backends")
-	errOperation    = errors.New("managed Hysteria2 INPUT operation failed; check permissions and firewall reloads")
-	errCompensation = errors.New("managed Hysteria2 INPUT update and owned-rule recovery were incomplete; retry reconciliation")
-	errLease        = errors.New("managed Hysteria2 INPUT is already active in another Node process; use one managed process per network namespace")
-	errLegacyNFT    = errors.New("managed Hysteria2 INPUT cannot safely manage active nftables compatibility INPUT with nft 0.9.0; use manual firewall management")
+	errInvalid      = errors.New("managed INPUT received an invalid listener or owner")
+	errRules        = errors.New("managed INPUT cannot safely identify the host rules; no unknown resources were changed")
+	errOwnership    = errors.New("managed INPUT ownership or references conflict; unknown resources were preserved")
+	errUnsupported  = errors.New("managed INPUT does not support native nftables INPUT chains or firewalld; use manual firewall management")
+	errUnavailable  = errors.New("managed INPUT requires Linux, root/CAP_NET_ADMIN, nftables and the active iptables backends")
+	errOperation    = errors.New("managed INPUT operation failed; check permissions and firewall reloads")
+	errCompensation = errors.New("managed INPUT update and owned-rule recovery were incomplete; retry reconciliation")
+	errLease        = errors.New("managed INPUT is already active in another Node process; use one managed process per network namespace")
+	errLegacyNFT    = errors.New("managed INPUT cannot safely manage active nftables compatibility INPUT with nft 0.9.0; use manual firewall management")
+	errExternal     = errors.New("managed INPUT detected UFW or firewalld ownership; configure Node ports through that firewall manager")
+	errVerification = errors.New("managed INPUT post-repair verification failed; rules changed concurrently or were not installed")
 )
 
 type backend struct {
@@ -80,6 +83,106 @@ func New(owner string) *Manager {
 type listener struct {
 	port, family int
 	address      netip.Addr
+	transport    string
+}
+
+// Listener describes a successfully started kernel listener, never panel intent.
+type Listener struct {
+	Protocol      string `json:"protocol"`
+	Transport     string `json:"transport"`
+	ListenAddress string `json:"listen_address"`
+	ListenPort    int    `json:"listen_port"`
+}
+
+type Status struct {
+	Healthy    bool             `json:"healthy"`
+	Repairable bool             `json:"repairable"`
+	Chain      string           `json:"chain"`
+	Backends   []BackendStatus  `json:"backends"`
+	Issues     []string         `json:"issues"`
+	Listeners  []ListenerStatus `json:"listeners"`
+}
+
+type ListenerStatus struct {
+	Listener
+	Allowed         bool     `json:"allowed"`
+	RuleStatus      string   `json:"rule_status"`
+	EffectiveStatus string   `json:"effective_status"`
+	Issues          []string `json:"issues"`
+}
+
+// Reserve protects every live registry owner, including locally disabled
+// owners, from another manager's orphan sweep. It never touches host state.
+func (m *Manager) Reserve() error {
+	c := m.controller
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !m.ownerOK {
+		return errInvalid
+	}
+	if other := c.owners[m.name]; other != nil && other != m {
+		return errOwnership
+	}
+	c.owners[m.name] = m
+	return nil
+}
+
+func (m *Manager) ReleaseReservation() {
+	c := m.controller
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !m.registered && c.owners[m.name] == m {
+		delete(c.owners, m.name)
+	}
+}
+
+type BackendStatus struct {
+	Family       int      `json:"family"`
+	Kind         string   `json:"kind"`
+	Policy       string   `json:"policy"`
+	ChainPresent bool     `json:"chain_present"`
+	Referenced   bool     `json:"referenced"`
+	Ordered      bool     `json:"ordered"`
+	Allowed      bool     `json:"allowed"`
+	Issues       []string `json:"issues"`
+}
+
+func validateListeners(values []Listener) ([]*listener, error) {
+	if len(values) > 4096 {
+		return nil, errInvalid
+	}
+	var result []*listener
+	seen := make(map[string]bool)
+	for _, v := range values {
+		if strings.TrimSpace(v.Protocol) == "" || (v.Transport != "tcp" && v.Transport != "udp") {
+			return nil, errInvalid
+		}
+		// Reuse the strict address/port validation without interpreting protocol names.
+		l, err := validate(&model.NodeSpec{Protocol: "hysteria", Version: 2, ListenIP: v.ListenAddress, ServerPort: v.ListenPort})
+		if err != nil {
+			return nil, err
+		}
+		l.transport = v.Transport
+		key := strconv.Itoa(l.family) + "/" + l.address.String() + "/" + l.transport + "/" + strconv.Itoa(l.port)
+		if !seen[key] {
+			result = append(result, l)
+			seen[key] = true
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		a, b := result[i], result[j]
+		if a.family != b.family {
+			return a.family < b.family
+		}
+		if a.address != b.address {
+			return a.address.String() < b.address.String()
+		}
+		if a.transport != b.transport {
+			return a.transport < b.transport
+		}
+		return a.port < b.port
+	})
+	return result, nil
 }
 
 func validate(n *model.NodeSpec) (*listener, error) {
@@ -119,26 +222,43 @@ func (m *Manager) Update(n *model.NodeSpec) error {
 	c := m.controller
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var listeners []*listener
+	if want != nil {
+		want.transport = "udp"
+		listeners = []*listener{want}
+	}
+	return m.update(listeners)
+}
+
+// UpdateListeners replaces this owner's permissions using accepted runtime data.
+func (m *Manager) UpdateListeners(values []Listener) error {
+	want, err := validateListeners(values)
+	if err != nil || !m.ownerOK {
+		return errInvalid
+	}
+	c := m.controller
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return m.update(want)
 }
 
-func (m *Manager) update(want *listener) error {
+func (m *Manager) update(want []*listener) error {
 	c := m.controller
 	if other := c.owners[m.name]; other != nil && other != m {
 		return errOwnership
 	}
 	if !c.leased {
 		if err := c.system.acquire(); err != nil {
-			return safeError(err)
+			return phaseError("acquire management lease", err)
 		}
 		c.leased = true
 	}
-	if err := c.system.checkNative(); err != nil && want != nil {
-		return safeError(err)
+	if err := c.system.checkNative(); err != nil && len(want) > 0 {
+		return phaseError("inspect native nft INPUT", err)
 	}
 	backends, err := c.system.discover()
 	if err != nil {
-		return safeError(err)
+		return phaseError("discover active filter backends", err)
 	}
 	if len(backends) == 0 {
 		return errUnavailable
@@ -154,11 +274,14 @@ func (m *Manager) update(want *listener) error {
 		available[b.family] = true
 		data, err := c.system.read(b)
 		if err != nil {
-			return safeError(err)
+			return phaseError("read IPv"+b.key()+" filter", err)
 		}
 		s, err := inspectSave(data)
 		if err != nil {
 			return err
+		}
+		if len(want) > 0 && externallyManaged(s) {
+			return errExternal
 		}
 		all, err := owned(s)
 		if err != nil {
@@ -173,8 +296,9 @@ func (m *Manager) update(want *listener) error {
 			}
 		}
 		var desired *ownedChain
-		if want != nil && (want.family == 0 || want.family == b.family) {
-			d := m.desired(want)
+		selected := listenersForFamily(want, b.family)
+		if len(selected) > 0 {
+			d := m.desiredMany(selected)
 			desired = &d
 		}
 		remove[m.name] = true
@@ -191,8 +315,10 @@ func (m *Manager) update(want *listener) error {
 		script := patch(s, all, remove, after)
 		work = append(work, change{backend: b, before: before, after: after, script: script, names: remove})
 	}
-	if want != nil && ((want.family != 0 && !available[want.family]) || (want.family == 0 && !available[4] && !available[6])) {
-		return errUnavailable
+	for _, l := range want {
+		if (l.family != 0 && !available[l.family]) || (l.family == 0 && !available[4] && !available[6]) {
+			return errUnavailable
+		}
 	}
 	// A failed or timed-out first transaction may still have committed. Keep
 	// the owner registered so Close can retry strict, own-only cleanup even
@@ -209,11 +335,49 @@ func (m *Manager) update(want *listener) error {
 			// inspect its current owned subset rather than assuming no change.
 			applied = append(applied, entry)
 			if !c.recover(applied) {
-				return errCompensation
+				return phaseError("apply IPv"+entry.backend.key()+" filter and compensate", errCompensation)
 			}
-			return safeError(err)
+			return phaseError("apply IPv"+entry.backend.key()+" filter", err)
 		}
 		applied = append(applied, entry)
+	}
+	for _, entry := range work {
+		if err := c.verify(entry); err != nil {
+			return phaseError("verify IPv"+entry.backend.key()+" filter", err)
+		}
+	}
+	return nil
+}
+
+func listenersForFamily(values []*listener, family int) []*listener {
+	var result []*listener
+	for _, l := range values {
+		if l.family == 0 || l.family == family {
+			result = append(result, l)
+		}
+	}
+	return result
+}
+
+func (c *controller) verify(entry change) error {
+	data, err := c.system.read(entry.backend)
+	if err != nil {
+		return safeError(err)
+	}
+	s, err := inspectSave(data)
+	if err != nil {
+		return err
+	}
+	all, err := owned(s)
+	if err != nil {
+		return err
+	}
+	for name := range entry.names {
+		current, exists := all[name]
+		wanted, desired := entry.after[name]
+		if exists != desired || desired && (!sameBody(current, wanted) || len(current.jumps) != 1 || current.positions[0] > leadingOwned(s, all)) {
+			return errVerification
+		}
 	}
 	return nil
 }
@@ -288,27 +452,55 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) desired(l *listener) ownedChain {
-	allow := []string{"-p", "udp", "-m", "udp", "--dport", strconv.Itoa(l.port)}
-	if l.address.IsValid() {
-		bits := "/128"
-		if l.address.Is4() {
-			bits = "/32"
+	return m.desiredMany([]*listener{l})
+}
+
+func (m *Manager) desiredMany(listeners []*listener) ownedChain {
+	var rules [][]string
+	for _, l := range listeners {
+		transport := l.transport
+		if transport == "" {
+			transport = "udp"
+		} // legacy HY2 API
+		allow := []string{"-p", transport, "-m", transport, "--dport", strconv.Itoa(l.port)}
+		if l.address.IsValid() {
+			bits := "/128"
+			if l.address.Is4() {
+				bits = "/32"
+			}
+			allow = append([]string{"-d", l.address.String() + bits}, allow...)
 		}
-		allow = append([]string{"-d", l.address.String() + bits}, allow...)
+		allow = append(allow, "-m", "comment", "--comment", m.marker, "-j", "ACCEPT")
+		rules = append(rules, allow)
 	}
-	allow = append(allow, "-m", "comment", "--comment", m.marker, "-j", "ACCEPT")
+	rules = append(rules, []string{"-m", "comment", "--comment", m.marker, "-j", "RETURN"})
 	return ownedChain{name: m.name, marker: m.marker,
-		rules: [][]string{allow, {"-m", "comment", "--comment", m.marker, "-j", "RETURN"}},
+		rules: rules,
 		jumps: [][]string{{"-m", "comment", "--comment", m.marker, "-j", m.name}}}
 }
 
 func safeError(err error) error {
-	for _, known := range []error{errInvalid, errRules, errOwnership, errUnsupported, errUnavailable, errOperation, errCompensation, errLease, errLegacyNFT} {
+	var contextual *operationError
+	if errors.As(err, &contextual) {
+		return &operationError{stage: contextual.stage, cause: safeError(contextual.cause)}
+	}
+	for _, known := range []error{errInvalid, errRules, errOwnership, errUnsupported, errUnavailable, errOperation, errCompensation, errLease, errLegacyNFT, errExternal, errVerification} {
 		if errors.Is(err, known) {
 			return known
 		}
 	}
 	return errOperation
+}
+
+type operationError struct {
+	stage string
+	cause error
+}
+
+func (e *operationError) Error() string { return fmt.Sprintf("%s: %s", e.stage, e.cause) }
+func (e *operationError) Unwrap() error { return e.cause }
+func phaseError(stage string, err error) error {
+	return &operationError{stage: stage, cause: safeError(err)}
 }
 
 // patch uses --noflush restore semantics. Only verified, owned user chains are

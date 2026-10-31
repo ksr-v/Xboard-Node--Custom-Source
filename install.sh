@@ -31,12 +31,12 @@ DEFAULT_HEALTH_PORT=65530
 DEFAULT_KERNEL="singbox"
 DEFAULT_MODE="node"
 DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.10}"
+DEFAULT_RELEASE_VERSION="${XBOARD_NODE_RELEASE_VERSION:-v1.13-orphan.11}"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="${XBOARD_NODE_DOWNLOAD_BASE:-https://github.com/ksr-v/Xboard-Node--Custom-Source/releases}"
 DEFAULT_ASSET_BASE="${XBOARD_NODE_ASSET_BASE:-https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/dev}"
-INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.10"
+INSTALLER_STAGE_BASE="https://raw.githubusercontent.com/ksr-v/Xboard-Node--Custom-Source/v1.13-orphan.11"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -266,12 +266,12 @@ usage() {
     --kernel, -k        singbox or xray (default: singbox)
     --endpoint-ca-base64       Panel-generated public CA bundle (no private key)
     --endpoint-ca-fingerprint  Independently delivered SHA-256 root pins
-    --version           Fixed release version (this installer verifies v1.13-orphan.10 only)
+    --version           Fixed release version (this installer verifies v1.13-orphan.11 only)
     --download-base     Release-layout base (default: ksr-v/Xboard-Node--Custom-Source/releases)
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
     --health-port       Local health port (default: 65530, use 0 to disable)
-    --skip-firewall     Disable automatic managed Hysteria2 UDP INPUT rules
+    --skip-firewall     Disable automatic managed runtime TCP/UDP INPUT rules
     --gomemlimit        Runtime GOMEMLIMIT value, e.g. 256MiB
     --gogc              Runtime GOGC value, e.g. 50
     --force-reconfigure Overwrite an existing install even if mode/target changed
@@ -795,7 +795,7 @@ ensure_input_cli() {
     local tool
     for tool in iptables ip6tables; do
         if ! command -v "$tool" >/dev/null 2>&1 || ! "$tool" --version >/dev/null 2>&1; then
-            log_error 'Managed UDP INPUT requires working iptables/ip6tables; install the iptables package or use --skip-firewall. Existing Node files/service have not been replaced.'
+            log_error 'Managed INPUT requires working iptables/ip6tables; install the iptables package or use --skip-firewall. Existing Node files/service have not been replaced.'
             return 1
         fi
     done
@@ -804,11 +804,11 @@ ensure_input_cli() {
 show_port_hopping_note() {
     log_info 'Hysteria2: Node automatically manages UDP forwarding when the panel supplies a port-hopping range.'
     if [ "$MANAGED_INPUT" -eq 1 ]; then
-        log_info 'Managed INPUT is enabled for the actual Hysteria2 UDP listener on supported iptables backends; local firewall.managed_input: false disables it. Rules are checked every 30 seconds.'
+        log_info 'Managed INPUT is enabled for successfully running TCP/UDP listeners on supported active iptables backends; local firewall.managed_input: false disables it. Rules are checked every 30 seconds.'
     else
-        log_info 'Managed INPUT is disabled; permit the primary UDP listener in your host firewall. Redirect changes the destination port.'
+        log_info 'Managed INPUT is disabled; permit actual TCP/UDP listeners in your host firewall. Hysteria2 redirect changes the destination port.'
     fi
-    log_info 'Permit the advertised UDP range at the cloud/network edge. Additional native nftables INPUT/firewalld policies require administrator-managed rules.'
+    log_info 'Permit advertised ports/ranges at the cloud/network edge. Native nftables INPUT, UFW and firewalld conflicts require administrator-managed rules. Inspect with xboard-node firewall diagnose.'
 }
 
 ensure_dirs() {
@@ -1018,15 +1018,15 @@ stage_endpoint_trust() {
         ENDPOINT_TRUST=1
     fi
     if [ "$ENDPOINT_TRUST" -eq 1 ]; then
-        [ "$RELEASE_VERSION" = v1.13-orphan.10 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.10'; return 1; }
+        [ "$RELEASE_VERSION" = v1.13-orphan.11 ] || { log_error 'NodeEndpoint requires the audited independent Node v1.13-orphan.11'; return 1; }
     fi
 }
 
 verify_endpoint_binary() {
     # Pin executable bytes for both domain and private-CA installations. Changing
     # the CA mode must never disable the release's binary integrity check.
-    [ "$RELEASE_VERSION" = v1.13-orphan.10 ] || {
-        log_error 'This installer can only verify v1.13-orphan.10 assets; use the matching audited installer for another release'
+    [ "$RELEASE_VERSION" = v1.13-orphan.11 ] || {
+        log_error 'This installer can only verify v1.13-orphan.11 assets; use the matching audited installer for another release'
         return 1
     }
     local expected
@@ -1162,7 +1162,7 @@ render_service() {
     cat >"$TMP_DIR/${SERVICE_NAME}" <<EOF_UNIT
 [Unit]
 Description=Xboard Node Backend
-After=network-online.target
+After=network-online.target netfilter-persistent.service nftables.service ufw.service firewalld.service
 Wants=network-online.target
 
 [Service]

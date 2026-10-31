@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cedar2025/xboard-node/internal/config"
+	"github.com/cedar2025/xboard-node/internal/firewall"
 	"gopkg.in/yaml.v3"
 )
 
@@ -167,6 +168,8 @@ func run(args []string) error {
 		return runService([]string{"logs"})
 	case "health":
 		return runHealth()
+	case "firewall":
+		return firewall.RunCLI(args[1:], os.Stdout)
 	case "bind":
 		return runBind(args[1:])
 	case "bind-node":
@@ -209,6 +212,7 @@ func printUsage() {
   xbctl config retarget --config PATH --credentials-file PATH --instance ID --input-file PRIVATE_JSON --out-config PATH --out-credentials PATH
   xbctl service status|start|stop|restart|enable|disable|logs
   xbctl health
+  xbctl firewall <status|check|repair|ports|diagnose> [--output text|json]
   xbctl bind add-node --panel-url URL --token TOKEN --node-id ID [--node-type TYPE] [--kernel singbox|xray]
   xbctl bind add-machine --panel-url URL --token TOKEN --machine-id ID [--kernel singbox|xray]
   xbctl bind remove <instance-id>
@@ -1208,7 +1212,7 @@ func renderServiceFile(managedInput bool) string {
 	}
 	return fmt.Sprintf(`[Unit]
 Description=Xboard Node Backend
-After=network-online.target
+After=network-online.target netfilter-persistent.service nftables.service ufw.service firewalld.service
 Wants=network-online.target
 
 [Service]

@@ -187,6 +187,35 @@ func TestDiscoverInactiveLegacyAndDisabledIPv6AreNotActivated(t *testing.T) {
 	}
 }
 
+func TestDiscoverLegacyOnlyDoesNotActivateInstalledNFTHook(t *testing.T) {
+	s, _ := fakeLinuxTools()
+	s.nftFamilies = map[int]bool{}
+	found, err := s.discover()
+	if err != nil || len(found) != 2 {
+		t.Fatal(found, err)
+	}
+	for _, b := range found {
+		if b.kind != "legacy" {
+			t.Fatal("installed but inactive nft backend was selected", b)
+		}
+	}
+}
+
+func TestDiscoverEmptyHostBootstrapsOnlyOneHookPerFamily(t *testing.T) {
+	s, _ := fakeLinuxTools()
+	s.nftFamilies = map[int]bool{}
+	s.legacy = func(int) bool { return false }
+	found, err := s.discover()
+	if err != nil || len(found) != 2 {
+		t.Fatal(found, err)
+	}
+	for _, b := range found {
+		if b.kind != "nft" {
+			t.Fatal("empty host activated multiple filter implementations", b)
+		}
+	}
+}
+
 func TestNativeInspectionAndRestoreCommandsAreBoundedAndShellFree(t *testing.T) {
 	s, _ := fakeLinuxTools()
 	calls := 0
@@ -377,9 +406,35 @@ func TestCommandFailureOverflowTimeoutNeverExposeDiagnostics(t *testing.T) {
 			if !errors.Is(err, errOperation) || len(data) != 0 || strings.Contains(err.Error(), "secret") {
 				t.Fatalf("command fixture: safe_error=%t data_bytes=%d elapsed_ms=%d", errors.Is(err, errOperation), len(data), time.Since(start).Milliseconds())
 			}
+			want := map[string]string{"failure": "command exited with code 3", "overflow": "command output limit exceeded", "timeout": "command timed out"}[mode]
+			if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), path) {
+				t.Fatal("command failure classification missing or private path exposed", err)
+			}
 			if time.Since(start) > 8*time.Second {
 				t.Fatal("command deadline not enforced")
 			}
 		})
+	}
+}
+
+func TestCommandStartFailuresUseFixedPrivateClassifications(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		name, classification string
+		create               bool
+	}{
+		{"private-password-secret-missing", "command executable not found", false},
+		{"private-password-secret-denied", "command execution permission denied", true},
+	} {
+		path := filepath.Join(dir, tc.name)
+		if tc.create {
+			if err := os.WriteFile(path, []byte("private-content-secret"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		data, err := runCommand(path, nil, "")
+		if !errors.Is(err, errOperation) || len(data) != 0 || !strings.Contains(err.Error(), tc.classification) || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), dir) {
+			t.Fatal("unsafe command start diagnostics", err)
+		}
 	}
 }

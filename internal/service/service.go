@@ -18,6 +18,7 @@ import (
 	"github.com/cedar2025/xboard-node/internal/cert/dnsproviders"
 	"github.com/cedar2025/xboard-node/internal/config"
 	"github.com/cedar2025/xboard-node/internal/controlplane"
+	"github.com/cedar2025/xboard-node/internal/firewall"
 	"github.com/cedar2025/xboard-node/internal/inputfirewall"
 	"github.com/cedar2025/xboard-node/internal/kernel"
 	"github.com/cedar2025/xboard-node/internal/kernel/singbox"
@@ -31,16 +32,17 @@ import (
 )
 
 type Service struct {
-	cfg           *config.Config
-	source        controlplane.Source
-	sink          controlplane.Sink
-	kernel        kernel.Kernel
-	tracker       *tracker.Tracker
-	limiter       *limiter.Limiter
-	speedTracker  *limiter.SpeedTracker
-	cert          *cert.Manager
-	portForward   portForwarder
-	inputFirewall portForwarder
+	cfg                  *config.Config
+	source               controlplane.Source
+	sink                 controlplane.Sink
+	kernel               kernel.Kernel
+	tracker              *tracker.Tracker
+	limiter              *limiter.Limiter
+	speedTracker         *limiter.SpeedTracker
+	cert                 *cert.Manager
+	portForward          portForwarder
+	inputFirewall        firewall.RuleManager
+	firewallRegistration *firewall.Registration
 	// A temporary privileged-rule failure at startup must remain retryable,
 	// including in machine mode where the Service is already registered.
 	networkRetryPending bool
@@ -166,7 +168,7 @@ func newService(cfg *config.Config, cp controlplane.ControlPlane) *Service {
 	l := limiter.New()
 	st := limiter.NewSpeedTracker(l)
 	owner := fmt.Sprintf("%s|node:%d|%s", cfg.InstanceID, cfg.Panel.NodeID, cfg.Kernel.ConfigDir)
-	var input portForwarder
+	var input firewall.RuleManager
 	if cfg.ManagedInputEnabled() {
 		input = inputfirewall.New(owner)
 	}
@@ -189,9 +191,13 @@ func newService(cfg *config.Config, cp controlplane.ControlPlane) *Service {
 }
 
 func (s *Service) Run(ctx context.Context) error {
-	// Also runs after failed startup. Only this service's managed UDP rules
+	s.registerFirewallRegistry()
+	// Also runs after failed startup. Only this service's managed rules
 	// are removed; other node services and host firewall policies are untouched.
 	defer s.closeNetworkRules()
+	// A previous boot may have restored this owner's old rules. With no
+	// successfully started listeners yet, remove those permissions immediately.
+	s.syncInputFirewall()
 	// Start cert manager (handles auto-TLS or manual cert verification)
 	if err := s.cert.Start(ctx); err != nil {
 		return fmt.Errorf("cert manager: %w", err)
@@ -202,7 +208,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if err := s.initialSetup(ctx); err != nil {
 		return fmt.Errorf("initial setup: %w", err)
 	}
-	defer s.kernel.Stop()
+	defer s.stopKernel()
 
 	// Set up tickers
 	s.tracker.SetTrackInterval(s.cfg.Node.TrackInterval)
@@ -352,6 +358,7 @@ func (s *Service) initialSetup(ctx context.Context) error {
 			s.lastConfigHash = computeConfigHash(nil)
 			nlog.Core().Warn("inactive UDP network cleanup pending; automatic retry remains enabled", "error", err)
 		}
+		s.syncInputFirewall()
 		nlog.Core().Warn("no users, kernel will not start until users are available")
 		s.markMailboxReadyAndDrain(ctx)
 		return nil
@@ -790,7 +797,7 @@ func (s *Service) startKernel(nc *model.NodeSpec, users []model.UserSpec) bool {
 		s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 		return false
 	}
-	if err := s.kernel.Start(nc, users, s.cert.TLSCert()); err != nil {
+	if err := s.changeKernel(func() error { return s.kernel.Start(nc, users, s.cert.TLSCert()) }); err != nil {
 		nlog.Core().Error("failed to start kernel", "error", err)
 		s.restoreNetworkRules()
 		s.lastConfigHash = computeConfigHash(s.appliedState.Config)
@@ -990,7 +997,7 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 
 	if s.lastConfig == nil || len(s.lastUsers) == 0 {
 		if len(s.lastUsers) == 0 {
-			s.kernel.Stop()
+			s.stopKernel()
 			s.appliedState.Users = nil
 			if err := s.updateNetworkRules(nil); err != nil {
 				nlog.Core().Error("failed to remove inactive Hysteria2 UDP network rules", "error", err)
@@ -1007,7 +1014,7 @@ func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged 
 			s.lastConfigHash = computeConfigHash(s.appliedState.Config)
 			return
 		}
-		if err := s.kernel.Reload(s.lastConfig, s.lastUsers, s.cert.TLSCert()); err != nil {
+		if err := s.changeKernel(func() error { return s.kernel.Reload(s.lastConfig, s.lastUsers, s.cert.TLSCert()) }); err != nil {
 			s.restoreNetworkRules()
 			nlog.Core().Warn(fmt.Sprintf("reload failed; previous working configuration retained when available: %v", err))
 			s.lastConfigHash = computeConfigHash(s.appliedState.Config)
@@ -1036,24 +1043,14 @@ func (s *Service) updatePortForward(nc *model.NodeSpec) error {
 	return s.portForward.Update(nc)
 }
 
-// updateNetworkRules coordinates the two independently owned rule managers.
-// Each manager compensates its own partial backend updates. If INPUT fails
-// after NAT succeeded, both are restored to the running, accepted snapshot.
+// NAT remains a precondition for applying a port-hopping configuration. INPUT
+// is synchronized separately, after the kernel accepts its runtime listeners.
 func (s *Service) updateNetworkRules(nc *model.NodeSpec) error {
-	if err := s.updatePortForward(nc); err != nil {
-		return err
-	}
-	if s.inputFirewall != nil {
-		if err := s.inputFirewall.Update(nc); err != nil {
-			s.restoreNetworkRules()
-			return fmt.Errorf("managed Hysteria2 UDP INPUT: %w", err)
-		}
-	}
-	return nil
+	return s.updatePortForward(nc)
 }
 
 func (s *Service) activeNetworkConfig() *model.NodeSpec {
-	if s.kernel.IsRunning() && len(s.lastUsers) > 0 {
+	if s.kernel.IsRunning() {
 		return s.appliedState.Config
 	}
 	return nil
@@ -1064,17 +1061,13 @@ func (s *Service) restoreNetworkRules() {
 	if err := s.updatePortForward(previous); err != nil {
 		nlog.Core().Error("failed to restore accepted UDP forwarding", "error", err)
 	}
-	if s.inputFirewall != nil {
-		if err := s.inputFirewall.Update(previous); err != nil {
-			nlog.Core().Error("failed to restore accepted UDP INPUT; automatic retry remains enabled", "error", err)
-		}
-	}
 }
 
 func (s *Service) reconcileActiveNetworkRules() {
 	if err := s.updateNetworkRules(s.activeNetworkConfig()); err != nil {
 		nlog.Core().Warn("UDP network rule reconciliation pending", "error", err)
 	}
+	s.syncInputFirewall()
 }
 
 // Called only on the service's main loop: no background rule writer can race
@@ -1085,12 +1078,78 @@ func (s *Service) reconcileNetworkRules(ctx context.Context) {
 }
 
 func (s *Service) closeNetworkRules() {
-	if s.inputFirewall != nil {
+	if s.firewallRegistration != nil {
+		if err := s.firewallRegistration.Close(); err != nil {
+			nlog.Core().Error("failed to clean up owned INPUT", "error", err)
+		}
+		s.firewallRegistration = nil
+	} else if s.inputFirewall != nil {
 		if err := s.inputFirewall.Close(); err != nil {
 			nlog.Core().Error("failed to clean up owned UDP INPUT", "error", err)
 		}
 	}
 	s.closePortForward()
+}
+
+func (s *Service) registerFirewallRegistry() {
+	if s.firewallRegistration != nil || s.cfg == nil {
+		return
+	}
+	owner := fmt.Sprintf("%s|node:%d|%s", s.cfg.InstanceID, s.cfg.Panel.NodeID, s.cfg.Kernel.ConfigDir)
+	s.firewallRegistration = firewall.Default.RegisterWithManager(owner, s.cfg.InstanceID, s.cfg.Panel.NodeID, s.inputFirewall != nil, s.runtimeListeners, s.inputFirewall)
+}
+
+func (s *Service) runtimeListeners() ([]inputfirewall.Listener, error) {
+	provider, ok := s.kernel.(kernel.RuntimeProvider)
+	if !ok {
+		if !s.kernel.IsRunning() {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("kernel does not expose applied runtime listeners")
+	}
+	inbounds, err := provider.RuntimeInbounds()
+	listeners := make([]inputfirewall.Listener, 0, len(inbounds))
+	for _, inbound := range inbounds {
+		listeners = append(listeners, inputfirewall.Listener{Protocol: inbound.Protocol, Transport: inbound.Transport, ListenAddress: inbound.ListenAddress, ListenPort: inbound.ListenPort})
+	}
+	return listeners, err
+}
+
+// An unavailable host firewall must leave the running kernel and the other
+// node instances intact. The next periodic reconciliation retries the repair.
+func (s *Service) syncInputFirewall() {
+	var err error
+	if s.firewallRegistration != nil {
+		err = s.firewallRegistration.Sync()
+	} else if s.inputFirewall != nil {
+		var listeners []inputfirewall.Listener
+		listeners, err = s.runtimeListeners()
+		if err == nil {
+			err = s.inputFirewall.UpdateListeners(listeners)
+		}
+	}
+	s.logInputFailure(err)
+}
+
+func (s *Service) changeKernel(change func() error) error {
+	if s.firewallRegistration != nil {
+		runtimeErr, inputErr := s.firewallRegistration.ChangeRuntime(change)
+		s.logInputFailure(inputErr)
+		return runtimeErr
+	}
+	err := change()
+	s.syncInputFirewall()
+	return err
+}
+
+func (s *Service) stopKernel() {
+	_ = s.changeKernel(func() error { s.kernel.Stop(); return nil })
+}
+
+func (s *Service) logInputFailure(err error) {
+	if err != nil {
+		nlog.Core().Warn("INPUT permissions unavailable for running listeners; automatic reconciliation remains enabled", "error", err)
+	}
 }
 
 func (s *Service) closePortForward() {
