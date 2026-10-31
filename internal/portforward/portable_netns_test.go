@@ -30,7 +30,7 @@ func TestPortableNATNetworkLifecycle(t *testing.T) {
 	n.PortHopping.End = 55
 	check := func(expected map[string]bool, target int) {
 		t.Helper()
-		data, err := m.system.snapshot()
+		data, err := m.system.snapshot(m.table, m.marker)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +104,7 @@ func TestPortableNATMigrateOldInetNetns(t *testing.T) {
 			}
 			read := func() *inventory {
 				t.Helper()
-				data, err := m.system.snapshot()
+				data, err := m.system.snapshot(m.table, m.marker)
 				if err != nil {
 					t.Fatal(err)
 				}

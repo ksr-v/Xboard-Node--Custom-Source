@@ -21,7 +21,7 @@ type system interface {
 	available() bool
 	lease(string) (func(), error)
 	lock() (func(), error)
-	snapshot() ([]byte, error)
+	snapshot(table, marker string) ([]byte, error)
 	apply(string) error
 	verify(*redirect, []int) error
 }
@@ -124,7 +124,7 @@ func (m *Manager) update(want *redirect) error {
 		return err
 	}
 	defer unlock()
-	data, err := m.system.snapshot()
+	data, err := m.system.snapshot(m.table, m.marker)
 	if err != nil {
 		if optional {
 			return nil

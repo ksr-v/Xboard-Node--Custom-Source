@@ -1,6 +1,6 @@
 # Hysteria2 端口跳跃与 UDP INPUT 自动管理
 
-Node **v1.13-orphan.9** 修复旧 nftables 空规则集读取，并将跳跃 NAT 改为按 IPv4/IPv6 建表，避免依赖较新的 inet NAT 和 table comment。保留 v8 的实际 HY2 UDP 监听端口 INPUT 管理，标准安装默认启用，本地管理员可以关闭。只更新面板插件不会更新已部署的 Node，已有机器按 [v9 更新教程](UPGRADE-v1.13-orphan.9.zh-CN.md)执行 `upgrade`。
+Node **v1.13-orphan.10** 兼容读取 nftables 1.0.6 在 JSON 中遗漏的旧 inet 表注释，经完整归属和结构校验后自动迁移。继续按 IPv4/IPv6 建立 NAT 表，以完整规则 marker 确认归属，并保留实际 HY2 UDP 监听端口 INPUT 管理。标准安装默认启用，本地管理员可以关闭。只更新面板插件不会更新已部署的 Node，已有机器按 [v10 更新教程](UPGRADE-v1.13-orphan.10.zh-CN.md)执行 `upgrade`。
 
 ## 配置与数据路径
 
@@ -37,7 +37,7 @@ firewall:
   managed_input: false
 ```
 
-该设置可作为多实例顶层默认值或实例本地配置。文件监视器会重新加载配置并重启进程内服务，现有代理连接需要重连。也可用 v9 安装器升级并关闭：
+该设置可作为多实例顶层默认值或实例本地配置。文件监视器会重新加载配置并重启进程内服务，现有代理连接需要重连。也可用 v10 安装器升级并关闭：
 
 ```bash
 sudo bash install.sh upgrade --skip-firewall
@@ -49,7 +49,7 @@ sudo bash install.sh upgrade --skip-firewall
 
 ## 支持范围和规则归属
 
-INPUT 管理覆盖可识别的 **iptables-nft / iptables-legacy、IPv4 / IPv6** 后端，使用每实例的 `XB_IN_<摘要>` chain 和完整归属注释。v9 NAT 使用相应地址族的 `ip xbnode_hop_<摘要>` / `ip6 xbnode_hop_<摘要>`，以非 hook 的 `__xbnode_owner` chain 内完整 marker 规则确认归属，不依赖 table comment。旧 v8 的 `inet` 表仅在完整归属和内容检查通过后迁移；归属不符或出现未知附加对象时拒绝删除。不把 Token、用户 UUID、私钥写入规则；不修改默认 policy，不清空外来规则，不写全局 `rules.v4` / `rules.v6`，不启动 `nftables.service` 加载系统规则。
+INPUT 管理覆盖可识别的 **iptables-nft / iptables-legacy、IPv4 / IPv6** 后端，使用每实例的 `XB_IN_<摘要>` chain 和完整归属注释。v9/v10 NAT 使用相应地址族的 `ip xbnode_hop_<摘要>` / `ip6 xbnode_hop_<摘要>`，以非 hook 的 `__xbnode_owner` chain 内完整 marker 规则确认归属，不依赖 table comment。旧 v8 的 `inet` 表仅在完整归属和内容检查通过后迁移；归属不符或出现未知附加对象时拒绝删除。不把 Token、用户 UUID、私钥写入规则；不修改默认 policy，不清空外来规则，不写全局 `rules.v4` / `rules.v6`，不启动 `nftables.service` 加载系统规则。
 
 旧 nftables 的空规则集可能输出空文本或 `{"nftables":null}`。v9 仅在 JSON 命令成功、输出符合受支持的空形式，且独立执行的 `nft list tables` 成功并确认为空时按空规则集处理；权限错误、畸形或有表输出不能借此忽略。逐地址族 NAT、规则注释和 fib 查询降低了最低功能需求，不代表任意旧发行版或防火墙布局都兼容；实际版本和场景见同版验证记录。
 
@@ -69,12 +69,16 @@ NAT 仍会检查现有 UDP socket、重复范围及不明转发冲突，避免�
 
 独立的 **30 秒**检查在 WS 连接或断开时都运行，修复当前成功应用配置的 INPUT 与 NAT；不会把已拒绝的待应用配置当成当前规则。仅内核运行且存在用户时保留规则，否则清理。防火墙 reload 后的恢复属于周期修复，等待30秒检查周期之外还包括串行命令执行耗时，期间可能暂时无法连接；不是写入全局保存文件后的即时持久化。
 
-正常停止、重启、卸载先停内核，再清理 owned INPUT/NAT；配置文件重新加载等待旧 Service 清理后再启动。SIGKILL、断电无法执行退出清理；后续启用管理的进程会在严格核对归属后回收旧 INPUT 资源，NAT 按稳定实例核对。v8 不能识别 v9 的逐地址族 NAT 归属格式，回退前须让 v9 正常停止并确认清理，再运行旧二进制。关闭管理或回退旧版，不能保证回收此前强制退出留下的资源；异常时由管理员检查，不要 flush 整套规则。
+正常停止、重启、卸载先停内核，再清理 owned INPUT/NAT；配置文件重新加载等待旧 Service 清理后再启动。SIGKILL、断电无法执行退出清理；后续启用管理的进程会在严格核对归属后回收旧 INPUT 资源，NAT 按稳定实例核对。v8 不能识别 v9/v10 的逐地址族 NAT 归属格式，回退前须让新版正常停止并确认清理，再运行旧二进制。关闭管理或回退旧版，不能保证回收此前强制退出留下的资源；异常时由管理员检查，不要 flush 整套规则。
 
 ## 验证范围
 
 先确认实际单端口 HY2 代理可用，再检查跳跃范围、其他端口仍被拒绝，以及正常停止后的清理。`systemctl is-active` 或 `/healthz` 成功只说明进程级状态，不证明内核已启动或 UDP 已放行；初始规则失败重试期间进程可以保持运行。
 
-v9 的空规则集、旧版 nftables、归属迁移、IPv4/IPv6、拒绝规则、回滚及正式资产验收范围记录于 [v9 发行说明](RELEASE-v1.13-orphan.9.md)及同版 `VERIFICATION.json`；记录区分解析夹具、实际 CLI/内核和真实 UDP 验证，不把其中一项等同全部环境可用。2026-10-30 的 [v8 说明](RELEASE-v1.13-orphan.8.md)保留此前 INPUT 验收，不计入 v9 总数。
+v10 的旧表注释兼容、严格归属迁移和正式资产验收范围记录于 [v10 发行说明](RELEASE-v1.13-orphan.10.md)及同版 `VERIFICATION.json`；记录区分解析夹具、实际 CLI/内核和真实 UDP 验证，不把其中一项等同全部环境可用。[v9 说明](RELEASE-v1.13-orphan.9.md)保留旧空规则集和逐地址族 NAT 验证，[v8 说明](RELEASE-v1.13-orphan.8.md)保留此前 INPUT 验收；历史数量不计入 v10 总数。
 
 历史验证（2026-10-25，v6 候选）：专用 Linux VM 共47项检查，包含双内核 standalone、machine、权限与冲突，使用隔离 IPv4、真实 TLS/QUIC 和45秒会话；详见[历史报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/docs/HYSTERIA2_AUTO_FORWARDING_REPORT.md)。这些结果不包含 v8 INPUT 或 v9 兼容修复，也不计入本版总数。公网、原生 ARM64、商业客户端和长期负载不能由本地测试推定。
+
+## nft 1.0.6 旧表迁移
+
+v10 在 JSON 遗漏旧 inet 表注释时，定向读取同一张表的文本注释，并重新读取 JSON 核对 handle、完整归属和表内对象。只迁移当前实例且结构完整的旧表；未知实例、缺失或不符的 marker、附加对象、并发替换及重叠外来 NAT 均拒绝自动清理。排查和人工恢复步骤见 [v10 升级说明](UPGRADE-v1.13-orphan.10.zh-CN.md)。

@@ -109,8 +109,8 @@ func (b *nftOutput) Write(data []byte) (int, error) {
 	return b.buffer.Write(data)
 }
 
-func (linuxSystem) snapshot() ([]byte, error) {
-	return nftsnapshot.Read(func(args ...string) ([]byte, error) { return nft("", args...) })
+func (linuxSystem) snapshot(table, marker string) ([]byte, error) {
+	return readSnapshot(func(args ...string) ([]byte, error) { return nft("", args...) }, table, marker)
 }
 func (linuxSystem) apply(script string) error {
 	_, err := nft(script, "-f", "-")

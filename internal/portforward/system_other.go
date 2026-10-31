@@ -14,7 +14,7 @@ func (unsupportedSystem) lease(string) (func(), error) {
 func (unsupportedSystem) lock() (func(), error) {
 	return nil, fmt.Errorf("automatic Hysteria2 UDP port forwarding requires Linux nftables; no host changes were made")
 }
-func (unsupportedSystem) snapshot() ([]byte, error) {
+func (unsupportedSystem) snapshot(string, string) ([]byte, error) {
 	return nil, fmt.Errorf("Linux nftables is required")
 }
 func (unsupportedSystem) apply(string) error { return fmt.Errorf("Linux nftables is required") }

@@ -43,7 +43,7 @@ func (s fakeSystem) lease(name string) (func(), error) {
 	return func() { s.host.mu.Lock(); delete(s.host.leases, name); s.host.mu.Unlock() }, nil
 }
 func (s fakeSystem) lock() (func(), error) { s.host.mu.Lock(); return s.host.mu.Unlock, nil }
-func (s fakeSystem) snapshot() ([]byte, error) {
+func (s fakeSystem) snapshot(string, string) ([]byte, error) {
 	s.host.snapshots++
 	if s.host.failSnapshot {
 		return nil, errors.New("NET_ADMIN denied")

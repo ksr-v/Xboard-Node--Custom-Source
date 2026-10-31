@@ -1,6 +1,6 @@
 # 使用 node 管理节点
 
-本说明对应 **v1.13-orphan.9** 的 Node、xbctl 和安装器。旧版可按[固定版本更新教程](UPGRADE-v1.13-orphan.9.zh-CN.md)执行 `upgrade`，配套更新菜单与配置编辑器；已有新版菜单也可输入 `node` 选 **1**，确认目标正式版本后更新。不要用新机安装或 `REPLACE` 来完成普通升级。本版修复旧 nftables 跳跃 NAT 兼容和 ACME 域名大小写问题，管理菜单的操作范围不变。
+本说明对应 **v1.13-orphan.10** 的 Node、xbctl 和安装器。旧版可按[固定版本更新教程](UPGRADE-v1.13-orphan.10.zh-CN.md)执行 `upgrade`，配套更新菜单与配置编辑器；已有新版菜单也可输入 `node` 选 **1**，确认目标正式版本后更新。不要用新机安装或 `REPLACE` 来完成普通升级。本版修复 nftables 1.0.6 的旧表所有权注释兼容和自动迁移问题，管理菜单的操作范围不变。
 
 在标准 Linux/systemd 安装的 Bash SSH 终端输入小写 `node`：
 
@@ -47,6 +47,6 @@
 
 ## 版本与验证范围
 
-v9 正式源码、程序版本、安装器固定摘要及实际执行的回归范围以 [v9 发行说明](RELEASE-v1.13-orphan.9.md)和同版 `VERIFICATION.json` 为准。更新后用 `xboard-node -v` 与 `xbctl version` 核对版本；进程 active 不代替真实代理连接与证书验收。
+v10 正式源码、程序版本、安装器固定摘要及实际执行的回归范围以 [v10 发行说明](RELEASE-v1.13-orphan.10.md)和同版 `VERIFICATION.json` 为准。更新后用 `xboard-node -v` 与 `xbctl version` 核对版本；进程 active 不代替真实代理连接与证书验收。
 
-历史管理功能验证（2026-10-28，v7）：Windows Go 配置编辑／TLS／重定向／凭据隔离测试、原26项安装器检查（25通过、1外部镜像路径跳过）、新7项管理检查通过；专用 Linux VM 13项真实 PTY/systemd/Node/SQLite 面板检查通过，Linux 五个相关包生产 tags `-race` 通过。在线升级使用固定摘要的受控 Release 样本 `v9.99.0`（仅测试，未公开发布），日志菜单仅用哨兵检查范围。这些历史结果不计入 v9 回归，也不能证明公网生产升级、原生 ARM64 代理流量、商业客户端或生产面板迁移。
+历史管理功能验证（2026-10-28，v7）：Windows Go 配置编辑／TLS／重定向／凭据隔离测试、原26项安装器检查（25通过、1外部镜像路径跳过）、新7项管理检查通过；专用 Linux VM 13项真实 PTY/systemd/Node/SQLite 面板检查通过，Linux 五个相关包生产 tags `-race` 通过。在线升级使用固定摘要的受控 Release 样本 `v9.99.0`（仅测试，未公开发布），日志菜单仅用哨兵检查范围。这些历史结果不计入 v10 回归，也不能证明公网生产升级、原生 ARM64 代理流量、商业客户端或生产面板迁移。
