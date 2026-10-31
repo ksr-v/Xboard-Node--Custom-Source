@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "success": true,
+  "source_base_head": "717099125eb26e2d5906ddad27c8d64391e51f63",
+  "started_at_utc": "2026-10-31T16:11:24.174128+00:00",
+  "go_version": "go1.26.8",
+  "kernel": "6.1.0-54-amd64",
+  "packages": [
+    "./internal/firewall",
+    "./internal/inputfirewall",
+    "./internal/nftsnapshot"
+  ],
+  "race_detector": true,
+  "CGO_ENABLED": "1",
+  "offline_only": true,
+  "isolated_network": true,
+  "isolated_mount": true,
+  "private_run": true,
+  "host_firewall_changed": false,
+  "toolchain_version_output": "go version go1.26.8 linux/amd64",
+  "command": [
+    "go",
+    "test",
+    "-race",
+    "-json",
+    "-count=1",
+    "-timeout=180s",
+    "./internal/firewall",
+    "./internal/inputfirewall",
+    "./internal/nftsnapshot"
+  ],
+  "exit_code": 0,
+  "passed_packages": [
+    "github.com/cedar2025/xboard-node/internal/firewall",
+    "github.com/cedar2025/xboard-node/internal/inputfirewall",
+    "github.com/cedar2025/xboard-node/internal/nftsnapshot"
+  ],
+  "top_level_passed_tests": 75,
+  "failed_tests": [],
+  "skipped_tests": [],
+  "required_socket_and_concurrency_tests_passed": [
+    "TestControlPrivateSocketLifecycle",
+    "TestRegistryConcurrentRepairAndOwnerIsolation",
+    "TestRegistryRepairCannotRaceRuntimeReplacement"
+  ],
+  "race_warning_detected": false,
+  "stdout_sha256": "8b16057fdcba526bd76caa2359a77ac8b72ad398c76cc47b2dd99069f14275bc",
+  "stderr_sha256": "dd2de48a97c40687f291052caa353869a163ed9da591c91471dac601a1482e47",
+  "validation_inputs_unchanged": true,
+  "finished_at_utc": "2026-10-31T16:12:13.923178+00:00"
+}

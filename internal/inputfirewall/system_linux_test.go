@@ -94,6 +94,11 @@ func TestTrustedToolPreservesMulticallAliasAndRejectsWritablePath(t *testing.T) 
 	if err := os.WriteFile(file, []byte("fixture"), 0777); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile's creation mode is filtered by the caller's umask. Set the
+	// intended unsafe permissions explicitly on hosts using the normal 022.
+	if err := os.Chmod(file, 0777); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", dir)
 	if _, err := trustedTool(name); err != errUnavailable {
 		t.Fatal("writable executable accepted", err)

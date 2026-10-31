@@ -1,6 +1,6 @@
 # 升级到 v1.13-orphan.11
 
-本说明对应 v11 发布候选。请等本版在 `ksr-v/Xboard-Node--Custom-Source` 正式发布并核对同版验证记录后，再使用下列固定 tag 命令。版本说明见 [v11](RELEASE-v1.13-orphan.11.md)，完整防火墙权限和边界见 [Firewall Manager](FIREWALL-MANAGER.zh-CN.md)。
+本说明对应正式 v11；使用下列固定 tag 命令前，核对同版验证记录和资产摘要。版本说明见 [v11](RELEASE-v1.13-orphan.11.md)，完整防火墙权限和边界见 [Firewall Manager](FIREWALL-MANAGER.zh-CN.md)。
 
 ## 升级前
 

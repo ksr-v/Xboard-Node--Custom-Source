@@ -3,7 +3,11 @@ FIREWALL-CHANGES.txt
 FIREWALL-MANAGER.zh-CN.md
 FIREWALL-TEST-REPORT.zh-CN.md
 HY2_PORT_HOPPING.md
+NODE_MANAGEMENT.zh-CN.md
 README.md
+RELEASE-v1.13-orphan.11.md
+UPGRADE-v1.13-orphan.11.zh-CN.md
+VERIFICATION-v1.13-orphan.11.json
 cmd/xbctl/main.go
 cmd/xboard-node/main.go
 install.sh
@@ -37,5 +41,14 @@ internal/kernel/xray/runtime_test.go
 internal/service/input_firewall_test.go
 internal/service/service.go
 internal/service/service_test.go
+release-build.json
 tools/test_firewall_runtime_netns.py
 tools/test_installer.py
+tools/test_release_metadata.py
+verification/firewall-v11/inputfirewall-netns.test.vm-final.netns.json
+verification/firewall-v11/tooling-tests.json
+verification/firewall-v11/vm-firewall-final-verification.json
+verification/firewall-v11/vm-linux-unit-results.json
+verification/firewall-v11/vm-race-verification.json
+verification/firewall-v11/xboard-node-linux-amd64.vm-final-arbitrary.runtime-netns.json
+verification/firewall-v11/xboard-node-linux-amd64.vm-final-standard.runtime-netns.json

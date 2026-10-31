@@ -6,7 +6,7 @@
 
 源码实现、自动化单测和隔离 Linux 实包验证已完成。最终候选的实际 Node 进程能够在 nft/legacy 同时活动、INPUT 默认 DROP 且存在终止 REJECT 的环境中，根据真实成功运行的入站自动放行 VLESS TCP 443 与 HY2 UDP 17443；规则被删除后可以检测并修复，热更新到 8443 后清理旧权限。停止及重新启动不会改变测试宿主原有规则和策略。
 
-尚未在原始 Debian 13 服务器执行“全新安装＋真实 Xboard 面板＋系统重启”最终现场验收。本次没有访问生产面板、使用生产凭据、部署或发布正式版本。不能把以下 standalone、网络命名空间结果称为公网或真实面板验收。
+尚未在原始 Debian 13 服务器执行“全新安装＋真实 Xboard 面板＋系统重启”最终现场验收。本次没有访问生产面板、使用生产凭据或部署生产服务；后续v11正式字节VM验收见下文补充。不能把以下 standalone、网络命名空间结果称为公网或真实面板验收。
 
 ## 工具链与环境
 
@@ -83,4 +83,12 @@ sudo python3 tools/test_firewall_runtime_netns.py --binary /absolute/xboard-node
 
 代码入口：`internal/kernel/runtime.go` 与双内核 `runtime.go`；`internal/firewall` 注册表/控制/CLI；`internal/inputfirewall` 规则与诊断；`internal/service/service.go` 生命周期；两 CLI main 和安装器 unit 顺序。新增端到端脚本为 `tools/test_firewall_runtime_netns.py`。
 
-工作区原有 portforward nft 1.0.6 兼容改动、snapshot及service backoff测试均保留，不算本次重新开发。`service.go` 兼有本次修改与原 `delayTicks` 修复，未撤销原修改。安装器仍固定原发行资产；正式上线前需要独立发布、更新资产摘要，并在 Debian 13 专用测试机完成真实面板与开机恢复终验。
+工作区原有 portforward nft 1.0.6 兼容改动、snapshot及service backoff测试均保留，不算本次重新开发。`service.go` 兼有本次修改与原 `delayTicks` 修复，未撤销原修改。v11安装器已固定本次通过VM测试的发行资产摘要；Debian 13真实面板与开机恢复仍需独立现场终验。
+
+## v11 最终字节：指定本地虚拟机验收（2026-11-01）
+
+正式构建基于 v10，固定 Go1.26.8 和维护内核；用户指定VM为 Debian12 / kernel6.1.0-54 / nftables1.0.6 / iptables1.8.9。18包460项顶层单测通过（2个依赖外部FlowScope环境的旧用例跳过），12个INPUT实包场景通过；实际Node分别以443→8443、25444→25445运行，两轮各9项全部通过，外来规则哈希保持一致。三包75项Go race测试全部通过，无跳过或数据竞争。VM实际执行的AMD64二进制SHA与发行附件逐字节一致，ARM64仅交叉编译。
+
+VM首次发现测试fixture受umask022影响，已显式Chmod0777并重跑全套；只修测试，不改通过验证的生产二进制。原开发目录的独立backoff修改没有混入本次发布，因此VM数量与此前开发工作区462项不同。完整机器可读证据见 [VERIFICATION-v1.13-orphan.11.json](VERIFICATION-v1.13-orphan.11.json) 和 [VM报告](verification/firewall-v11/vm-firewall-final-verification.json)。本次不是Debian13、真实面板、Reality认证业务或整机重启验收。
+
+最终安装器pin回填后，在同一Debian VM执行全部102项Python依赖工具、安装器替换/回滚、菜单与Release元数据模拟测试：100项通过、2项环境用例跳过。五项发布资产与安装器固定摘要校验通过。

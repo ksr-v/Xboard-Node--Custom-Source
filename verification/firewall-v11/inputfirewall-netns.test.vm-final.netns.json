@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "isolated_network": true,
+  "isolated_mount": true,
+  "private_run": true,
+  "nft_version": "1.0.6",
+  "legacy_nft": false,
+  "suite": "input",
+  "backends": [
+    "iptables-nft",
+    "ip6tables-nft",
+    "iptables-legacy",
+    "ip6tables-legacy"
+  ],
+  "passed": [
+    "empty_namespace_nat_bootstrap",
+    "empty_namespace_input_bootstrap",
+    "reject_before_update",
+    "stale_owned_cleanup",
+    "dual_stack_real_packets_and_scope",
+    "runtime_tcp_and_udp_hundred_repairs_port_change",
+    "idempotent_and_multiple_owners",
+    "repair_removed_jump",
+    "port_and_address_change",
+    "native_input_chain_rejected_without_mutation",
+    "nat_redirect_plus_input_real_packets",
+    "close_preserves_all_foreign_rules_and_policies"
+  ],
+  "failed": [],
+  "exit_code": 0
+}

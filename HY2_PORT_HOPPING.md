@@ -1,6 +1,6 @@
 # Hysteria2 端口跳跃与 UDP INPUT 自动管理
 
-Node **v1.13-orphan.11** 发布候选将 INPUT 管理扩展为[实际运行的 TCP/UDP 入站](FIREWALL-MANAGER.zh-CN.md)，HY2 的端口跳跃 NAT 继续独立工作。保留 v10 对 nftables 1.0.6 旧 inet 表注释的兼容读取、严格归属校验和自动迁移；继续按 IPv4/IPv6 建立 NAT 表，以完整规则 marker 确认归属。标准安装默认启用自动 INPUT，本地管理员可以关闭。只更新面板插件不会更新已部署的 Node，已有机器在本版正式发布后按 [v11 更新教程](UPGRADE-v1.13-orphan.11.zh-CN.md)执行 `upgrade`。
+Node **v1.13-orphan.11** 将 INPUT 管理扩展为[实际运行的 TCP/UDP 入站](FIREWALL-MANAGER.zh-CN.md)，HY2 的端口跳跃 NAT 继续独立工作。保留 v10 对 nftables 1.0.6 旧 inet 表注释的兼容读取、严格归属校验和自动迁移；继续按 IPv4/IPv6 建立 NAT 表，以完整规则 marker 确认归属。标准安装默认启用自动 INPUT，本地管理员可以关闭。只更新面板插件不会更新已部署的 Node，已有机器按 [v11 更新教程](UPGRADE-v1.13-orphan.11.zh-CN.md)执行 `upgrade`。
 
 ## 配置与数据路径
 
@@ -77,7 +77,7 @@ unit 在 `netfilter-persistent.service`、`nftables.service`、`ufw.service` 和
 
 先确认实际单端口 HY2 代理可用，再检查跳跃范围、其他端口仍被拒绝，以及正常停止后的清理。`systemctl is-active` 或 `/healthz` 成功只说明进程级状态，不证明内核已启动或 UDP 已放行；初始规则失败重试期间进程可以保持运行。
 
-v11 的运行监听注册、自愈、诊断与实际构建验证记录于 [v11 发行说明](RELEASE-v1.13-orphan.11.md)、[Firewall 测试报告](FIREWALL-TEST-REPORT.zh-CN.md)及同版 `VERIFICATION.json`。发布候选先在专用本地 Debian 12 虚拟机（内核6.1、nftables1.0.6、iptables1.8.9）验证，不能称为 Debian 13 现场验收。报告区分配置解析、内核启动、实际报文及认证业务，没有执行的场景不算通过。[v10 说明](RELEASE-v1.13-orphan.10.md)保留旧 NAT 归属迁移验证，[v9 说明](RELEASE-v1.13-orphan.9.md)保留旧空规则集和逐地址族 NAT 验证，[v8 说明](RELEASE-v1.13-orphan.8.md)保留此前 INPUT 验收；历史数量不计入 v11。
+v11 的运行监听注册、自愈、诊断与实际构建验证记录于 [v11 发行说明](RELEASE-v1.13-orphan.11.md)、[Firewall 测试报告](FIREWALL-TEST-REPORT.zh-CN.md)及同版 `VERIFICATION.json`。本版最终字节已在专用本地 Debian 12 虚拟机（内核6.1、nftables1.0.6、iptables1.8.9）验证，不能称为 Debian 13 现场验收。报告区分配置解析、内核启动、实际报文及认证业务，没有执行的场景不算通过。[v10 说明](RELEASE-v1.13-orphan.10.md)保留旧 NAT 归属迁移验证，[v9 说明](RELEASE-v1.13-orphan.9.md)保留旧空规则集和逐地址族 NAT 验证，[v8 说明](RELEASE-v1.13-orphan.8.md)保留此前 INPUT 验收；历史数量不计入 v11。
 
 历史验证（2026-10-25，v6 候选）：专用 Linux VM 共47项检查，包含双内核 standalone、machine、权限与冲突，使用隔离 IPv4、真实 TLS/QUIC 和45秒会话；详见[历史报告](https://github.com/ksr-v/Xboard-Independent-NodeEndpoint/blob/main/docs/HYSTERIA2_AUTO_FORWARDING_REPORT.md)。这些结果不包含 v8 INPUT 或 v9 兼容修复，也不计入本版总数。公网、原生 ARM64、商业客户端和长期负载不能由本地测试推定。
 

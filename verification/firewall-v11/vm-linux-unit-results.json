@@ -1,0 +1,149 @@
+[
+  {
+    "package": "cert",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 12,
+    "top_level_skipped": [],
+    "log_sha256": "94d03ecd9ff1a27eeb1730d5ebfa80ba2ba140de8e976f8f4e9d29bdec494c93"
+  },
+  {
+    "package": "config",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 28,
+    "top_level_skipped": [],
+    "log_sha256": "d4e6ab9b06fd9ff90c37be2858c9883a7e8e39a6510bf1299668e541baa7387b"
+  },
+  {
+    "package": "controlplane",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 11,
+    "top_level_skipped": [],
+    "log_sha256": "905843f9287867fa10916945b9a36a255d47858055dfb5df08d2776b45c0d2cc"
+  },
+  {
+    "package": "deviceadmission",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 12,
+    "top_level_skipped": [],
+    "log_sha256": "37ac239da07aebef9b6e355233859551d9a19d1cf0be43f8fcf799e481ba8b68"
+  },
+  {
+    "package": "dnsproviders",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 4,
+    "top_level_skipped": [],
+    "log_sha256": "77c353901cc970813ca76a79df938217b7710a6d59227bc16b8e86aabd6b4364"
+  },
+  {
+    "package": "firewall",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 21,
+    "top_level_skipped": [],
+    "log_sha256": "56a7d09a4bb4a0a4195d4cacadf84a834e9fcae1cae5c56433650d5bd04c2b0b"
+  },
+  {
+    "package": "inputfirewall",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 50,
+    "top_level_skipped": [],
+    "log_sha256": "a4ff3563e17cabd77466454ec3481b10d6ac9a282fa0efbe43d030661c839650"
+  },
+  {
+    "package": "kernel",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 1,
+    "top_level_skipped": [],
+    "log_sha256": "df65d07fd54a389495f22db0f6bcae845ea336fc910b77eb77aff95ac0247b27"
+  },
+  {
+    "package": "limiter",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 21,
+    "top_level_skipped": [],
+    "log_sha256": "2d177448b709ae4c2de5f6db592d8e4fb4510c38ae43d9139828d3e01e17ab75"
+  },
+  {
+    "package": "model",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 9,
+    "top_level_skipped": [],
+    "log_sha256": "9b8f74ef1853cc5b580279cbc55e7a46ddd88b5c580373619025437a9bcb2159"
+  },
+  {
+    "package": "nftsnapshot",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 4,
+    "top_level_skipped": [],
+    "log_sha256": "48c545d3a1bf998a8b29fa04648f88faaa2cd00ffe110250d2e31f962a88b291"
+  },
+  {
+    "package": "panel",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 42,
+    "top_level_skipped": [
+      "TestIPv4LiveProvider (0.00s)",
+      "TestAddressActualFlowScopeReceiver (0.00s)"
+    ],
+    "log_sha256": "c453b057089cf7b2db1907ed0d8ba461ec3af37dedbff8fb07eb90327e1d6921"
+  },
+  {
+    "package": "portforward",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 40,
+    "top_level_skipped": [],
+    "log_sha256": "d748f59890c69558d14029b049ea938ec1c9b77456aec1401247d40418edac54"
+  },
+  {
+    "package": "service",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 34,
+    "top_level_skipped": [],
+    "log_sha256": "aa92a69c19ffa73a1b0b033ca1a6f6e7487c248ffaed49de59efb23241bf82d0"
+  },
+  {
+    "package": "singbox",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 81,
+    "top_level_skipped": [],
+    "log_sha256": "23b7e84f72b24014e507aa10d7f8a227a6541729a2fbfc29204fb8523ba46622"
+  },
+  {
+    "package": "tracker",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 18,
+    "top_level_skipped": [],
+    "log_sha256": "cba897ced8105406376cc2af6c058cd290b3adcf26a8bd12bb735b5258d58e15"
+  },
+  {
+    "package": "xbctl",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 7,
+    "top_level_skipped": [],
+    "log_sha256": "24c4fbc8836900498ae3ef57237b94ebe1be26f3c0df38cc3fc2c5a92a8913c9"
+  },
+  {
+    "package": "xray",
+    "exit_code": 0,
+    "passed": true,
+    "top_level_passed": 65,
+    "top_level_skipped": [],
+    "log_sha256": "edf6e921b078679f7ac5df8b1ff8a4a6ba9975b8efc24451c226396dd73366b5"
+  }
+]

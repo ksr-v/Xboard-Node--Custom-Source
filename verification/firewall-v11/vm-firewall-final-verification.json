@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "version": "v1.13-orphan.11",
+  "success": true,
+  "started_at_utc": "2026-10-31T16:10:47.870008+00:00",
+  "kernel": "6.1.0-54-amd64",
+  "distribution": {
+    "PRETTY_NAME": "Debian GNU/Linux 12 (bookworm)",
+    "VERSION_ID": "12",
+    "ID": "debian"
+  },
+  "steps": [
+    {
+      "step": "xboard-node-version",
+      "passed": true,
+      "output": "xboard-node v1.13-orphan.11 (built 2026-10-31T16:00:00Z)"
+    },
+    {
+      "step": "xbctl-version",
+      "passed": true,
+      "output": "xbctl v1.13-orphan.11 (built 2026-10-31T16:00:00Z)"
+    },
+    {
+      "step": "all-18-final-linux-unit-packages",
+      "passed": true,
+      "top_level_passed": 460
+    },
+    {
+      "step": "all-12-final-input-packet-cases",
+      "passed": true,
+      "result_sha256": "b3c570d8328e505f73a30c5fbc3870630e0f99cc7365a0ac9d6173268f158a90"
+    },
+    {
+      "step": "vm-final-standard",
+      "passed": true,
+      "initial_port": 443,
+      "updated_port": 8443,
+      "result_sha256": "4a01bd02106bcdfea0c4617a782838738a2f061de03b61115aefc2ae09ac81cb"
+    },
+    {
+      "step": "vm-final-arbitrary",
+      "passed": true,
+      "initial_port": 25444,
+      "updated_port": 25445,
+      "result_sha256": "247a9a4f7765854b4f436e0bf31d9f03b89fd55aa314956dbc044a29924a8469"
+    }
+  ],
+  "input_sha256": {
+    "assets/inputfirewall-netns.test": "2d4b25f82bcffe170b9d77524b20a348062d1093be469afab84c1c9a36b7d5c2",
+    "assets/xbctl-linux-amd64": "57091997e06e183c8f5de663e6b1d72c3637a4cf3e7c0fae45f13323fb973c4c",
+    "assets/xboard-node-linux-amd64": "ac62b2a9717afb8e96d646d39bdc3edc0aed4b35de5a9990c38cc3bd5cabbe39",
+    "linux-tests/cert.test": "ab5914c8f95acebc864db9f2cd85ebed7f6e798c8bc8e4a630c37e5e1bddd974",
+    "linux-tests/config.test": "3d0a26f4d1c2b8e01fb4a62b0aca6aea34dae0bf714c25d6dd12c2df8c343dfd",
+    "linux-tests/controlplane.test": "236c6944779940d53ef73349192b73a3ff41ea591b268a5533daca8ed78998d7",
+    "linux-tests/deviceadmission.test": "5b247dda6b47d4afb14050f0cb4dad0ad0eeccb7ee904a905887942cb67c6b68",
+    "linux-tests/dnsproviders.test": "ecba74f9365097491145e703a0f8c01f8c4591657180b1b085230c2f2c7fe7a0",
+    "linux-tests/firewall.test": "4a9a818a4410d6102b33e0d0e75023cfa527526a4064e61e42cbcc839c82da96",
+    "linux-tests/inputfirewall.test": "c98fd50cd4814a5be6ab2e50d41ffeab7ff2aa48922c5ecdc2f1f946af89066c",
+    "linux-tests/kernel.test": "cd58d3a7ced6baa193b985d3a22d590bde6a2194a8d556d1c996d3e9061018a3",
+    "linux-tests/limiter.test": "ba4935da8335d3797476d9410282489e170c96ce30372fe5e2f8034e0badf0ee",
+    "linux-tests/model.test": "17fac6ac60ce0eca1885e7dec3457d9db829fc272980ab37c801bfe3ecb4fe84",
+    "linux-tests/nftsnapshot.test": "cea47c254bac2d59d9391baa84742e36750473818eeb252b00728f04967c9da3",
+    "linux-tests/panel.test": "0b4b4b9738bd9244ac82b2110ff6eec05e147ffdef85dd0369fb8cb6565f9a18",
+    "linux-tests/portforward.test": "6ff1a502161276758fbcf44e0668765b8d2f18d124adab5122155095c9e4bbf5",
+    "linux-tests/service.test": "97a4c6ac8766477f858edf9a311c6417d152a3d82dfa90f55a082a39accc80ed",
+    "linux-tests/singbox.test": "d3169e2536050b0f561499f1e4ecf67ae54ac52681cca9acbdcbdf323b32835b",
+    "linux-tests/tracker.test": "ca2df554f9b0ef2b274d93306b8c8f505e8555a253f3e3684a414088e45950a6",
+    "linux-tests/xbctl.test": "2ae7a0311c19163e4f6f4002c9eee7160dec10917d41a68c1aa68a7dc572ba8e",
+    "linux-tests/xray.test": "5dd8d11451cc4f074413777f36f57415dba1542e3523fc1e1d6d10e925a0384f",
+    "tools/test_firewall_runtime_netns.py": "3bfe403d6e4d429b31dc971f3e8fb83ad80c68a6dffb23666b828d1ef5215f4e",
+    "tools/test_inputfirewall_netns.py": "e4de27a17867071a0b80ded337eb21203b08988e3e99eefaa81dc236a11c4238",
+    "vm_validate_firewall.py": "3d383f0ad672fc668ac5de63d7a87bfad92781209604c75bc4ccba5f10cb511a"
+  },
+  "host_firewall_commands_executed": false,
+  "host_services_changed": false,
+  "limits": [
+    "isolated network namespace fixture, no real panel handshake",
+    "no real OS reboot",
+    "HY2 QUIC negotiation is not authenticated proxy traffic"
+  ],
+  "finished_at_utc": "2026-10-31T16:12:01.838952+00:00",
+  "validation_inputs_unchanged": true
+}

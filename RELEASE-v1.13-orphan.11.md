@@ -1,6 +1,6 @@
 # v1.13-orphan.11：运行入站防火墙管理与自愈
 
-日期：2026-11-01（Asia/Shanghai）。状态：发布候选，待专用本地虚拟机验证最终构建成功后正式发布。源码基于正式 v10，保留其 nftables 1.0.6 旧 NAT 归属兼容修复。
+日期：2026-11-01（Asia/Shanghai）。状态：正式发行，最终发布字节已通过专用本地虚拟机验证。源码基于正式 v10，保留其 nftables 1.0.6 旧 NAT 归属兼容修复。
 
 ## 修复的问题与新行为
 
@@ -33,6 +33,6 @@ VLESS、VMess、Trojan 按实际底层传输生成 TCP 或 UDP 权限；Shadowso
 
 固定 Go **1.26.8**，固定 `build_time=2026-10-31T16:00:00Z`，生产 tags 为 `with_quic,with_utls,with_wireguard,with_acme,with_clash_api`。维护内核 modfile、固定依赖快照、`CGO_ENABLED=0`、`-trimpath -buildvcs=false` 保持。四个 Linux Node/xbctl 的实际 SHA256 在最终构建后写入安装器，`SHA256SUMS` 与源码/构建提交证明另行核验。
 
-发布前使用授权的本地虚拟机 Debian **12**、内核6.1、nftables **1.0.6**、iptables **1.8.9** 测试最终发布字节，包括任意 VLESS TCP25444端口及端口变更。该环境不等于 Debian13，实际完成项目、数量、跳过项及原生/交叉编译范围以同版 `VERIFICATION.json` 和测试报告为准；候选阶段不把计划记为通过，也不累加旧版测试数量。
+发布前使用授权的本地虚拟机 Debian **12**、内核6.1、nftables **1.0.6**、iptables **1.8.9** 测试最终发布字节，包括任意 VLESS TCP25444端口及端口变更。该环境不等于 Debian13，实际完成项目、数量、跳过项及原生/交叉编译范围以同版 `VERIFICATION.json` 和测试报告为准；本次实际通过18个Linux包、460项顶层测试，12个INPUT实包场景及两轮各9项实际Node端到端场景；3包75项race测试通过。旧版数量不累加。
 
 standalone 连通测试不等于真实 Xboard 面板迁移；VLESS TCP 握手不等于 Reality/TLS/认证代理业务，HY2 QUIC版本协商不等于认证业务流量。公网、云安全组、商业客户端、长期负载及原生ARM64不能从本地AMD64测试推定。公开源码及附件不包含真实配置、Token、私钥或依赖缓存；发布后须重新下载公开附件核对完整摘要和 tag 指向。

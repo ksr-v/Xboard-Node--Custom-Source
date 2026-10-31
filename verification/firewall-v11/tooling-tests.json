@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "exit_code": 0,
+  "log_sha256": "03aa5d91b0320805264592b3c8276a3e309791473ff4b5e18ee262738867df37",
+  "archive_sha256": "af0c0c7f1c0ff231c28b79fbb473a13aa78f47146ccc02ffc9523a451218afbb",
+  "tests_run": 102,
+  "tests_passed": 100,
+  "tests_skipped": 2
+}

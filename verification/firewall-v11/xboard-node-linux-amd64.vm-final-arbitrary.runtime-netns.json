@@ -1,0 +1,201 @@
+{
+  "schema": 1,
+  "suite": "runtime",
+  "isolated_network": true,
+  "isolated_mount": true,
+  "private_run": true,
+  "panel_contacted": false,
+  "production_credentials_used": false,
+  "success": true,
+  "passed": [
+    "isolated_reject_drop_nft_legacy_fixture",
+    "actual_vless_runtime_registry_and_external_tcp_25444",
+    "xbctl_queries_same_live_registry",
+    "actual_hy2_external_udp_quic_version_negotiation",
+    "missing_vless_permission_detected_read_only",
+    "explicit_repair_restores_external_tcp",
+    "config_watcher_moves_listener_and_owned_permission_to_25445",
+    "graceful_stop_cleans_only_owned_rules_and_runtime_socket",
+    "new_node_process_rebuilds_permissions_from_successful_runtime"
+  ],
+  "failed": [],
+  "backends": [
+    "iptables-nft",
+    "ip6tables-nft",
+    "iptables-legacy",
+    "ip6tables-legacy"
+  ],
+  "limits": [
+    "standalone fixture; no real panel handshake",
+    "QUIC version negotiation does not verify authenticated HY2 traffic"
+  ],
+  "vless_initial_port": 25444,
+  "vless_updated_port": 25445,
+  "host_fixture_rule_hashes_before": {
+    "iptables-nft": "fb41e059e75d464435bd479d185de0a26955cf28cab2e7b2ad6f94312cbaf9e3",
+    "ip6tables-nft": "1510be24e1122a83061add56e2d70f8566ab81b93c038f6c03608e1ff7010c17",
+    "iptables-legacy": "fb41e059e75d464435bd479d185de0a26955cf28cab2e7b2ad6f94312cbaf9e3",
+    "ip6tables-legacy": "1510be24e1122a83061add56e2d70f8566ab81b93c038f6c03608e1ff7010c17"
+  },
+  "tool_preflight": [
+    {
+      "tool": "nft",
+      "arguments": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "version": "nftables v1.0.6 (Lester Gooch #5)"
+    },
+    {
+      "tool": "iptables-nft",
+      "arguments": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "version": "iptables v1.8.9 (nf_tables)"
+    },
+    {
+      "tool": "ip6tables-nft",
+      "arguments": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "version": "ip6tables v1.8.9 (nf_tables)"
+    },
+    {
+      "tool": "iptables-legacy",
+      "arguments": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "version": "iptables v1.8.9 (legacy)"
+    },
+    {
+      "tool": "ip6tables-legacy",
+      "arguments": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "version": "ip6tables v1.8.9 (legacy)"
+    },
+    {
+      "tool": "iptables-nft-save",
+      "arguments": [
+        "-t",
+        "filter"
+      ],
+      "exit_code": 0,
+      "stderr": "# Warning: iptables-legacy tables present, use iptables-legacy-save to see them\n",
+      "synthetic_output_sha256": "99cb2e323d2cf599efa3af769be419d7e7c2559d48f3ab5bc1e9c075efc19a1b"
+    },
+    {
+      "tool": "ip6tables-nft-save",
+      "arguments": [
+        "-t",
+        "filter"
+      ],
+      "exit_code": 0,
+      "stderr": "# Warning: ip6tables-legacy tables present, use ip6tables-legacy-save to see them\n",
+      "synthetic_output_sha256": "b737e64ad5aa0d0e27fe76db95def4c491dd54f6b37fd4a7ba1989cca6a615eb"
+    },
+    {
+      "tool": "iptables-legacy-save",
+      "arguments": [
+        "-t",
+        "filter"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "synthetic_output_sha256": "ee36ce3de3f53a147a4ed59c8e2f0659a8a52cb590458587e74091e5a06fa4f6"
+    },
+    {
+      "tool": "ip6tables-legacy-save",
+      "arguments": [
+        "-t",
+        "filter"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "synthetic_output_sha256": "2243395e93cf9512110088a9f316a83acf142e5747dae3bdd732962125e3e473"
+    },
+    {
+      "tool": "nft",
+      "arguments": [
+        "-j",
+        "list",
+        "ruleset"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "synthetic_output_sha256": "7be2bce98e575b46a1b8ef9d94084b2e63d557332b0e2fddd4abce9dab9e8df7"
+    }
+  ],
+  "initial_ports": [
+    {
+      "owner": "runtime-hy2|node:102|/run/xb-runtime-fixture/runtime-hy2",
+      "instance_id": "runtime-hy2",
+      "node_id": 102,
+      "protocol": "hysteria2",
+      "transport": "udp",
+      "listen_address": "::",
+      "listen_port": 17443,
+      "runtime_status": "running",
+      "rule_status": "allowed",
+      "effective_status": "allowed",
+      "managed": true
+    },
+    {
+      "owner": "runtime-vless|node:101|/run/xb-runtime-fixture/runtime-vless",
+      "instance_id": "runtime-vless",
+      "node_id": 101,
+      "protocol": "vless",
+      "transport": "tcp",
+      "listen_address": "::",
+      "listen_port": 25444,
+      "runtime_status": "running",
+      "rule_status": "allowed",
+      "effective_status": "allowed",
+      "managed": true
+    }
+  ],
+  "changed_ports": [
+    {
+      "owner": "runtime-hy2|node:102|/run/xb-runtime-fixture/runtime-hy2",
+      "instance_id": "runtime-hy2",
+      "node_id": 102,
+      "protocol": "hysteria2",
+      "transport": "udp",
+      "listen_address": "::",
+      "listen_port": 17443,
+      "runtime_status": "running",
+      "rule_status": "allowed",
+      "effective_status": "allowed",
+      "managed": true
+    },
+    {
+      "owner": "runtime-vless|node:101|/run/xb-runtime-fixture/runtime-vless",
+      "instance_id": "runtime-vless",
+      "node_id": 101,
+      "protocol": "vless",
+      "transport": "tcp",
+      "listen_address": "::",
+      "listen_port": 25445,
+      "runtime_status": "running",
+      "rule_status": "allowed",
+      "effective_status": "allowed",
+      "managed": true
+    }
+  ],
+  "host_fixture_rule_hashes_after": {
+    "iptables-nft": "fb41e059e75d464435bd479d185de0a26955cf28cab2e7b2ad6f94312cbaf9e3",
+    "ip6tables-nft": "1510be24e1122a83061add56e2d70f8566ab81b93c038f6c03608e1ff7010c17",
+    "iptables-legacy": "fb41e059e75d464435bd479d185de0a26955cf28cab2e7b2ad6f94312cbaf9e3",
+    "ip6tables-legacy": "1510be24e1122a83061add56e2d70f8566ab81b93c038f6c03608e1ff7010c17"
+  },
+  "foreign_rules_preserved": true
+}
